@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <title>DXF Nester (M1)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h2>DXF-filer</h2>
+      <input type="file" id="fileInput" accept=".dxf" multiple />
+      <div id="fileList"></div>
+
+      <h3>Material (mm)</h3>
+      <select id="materialSelect">
+        <option value="1000x1000">1000 × 1000</option>
+        <option value="1200x1200">1200 × 1200</option>
+        <option value="1500x1500">1500 × 1500</option>
+        <option value="1000x2000">1000 × 2000</option>
+        <option value="2000x1500">2000 × 1500</option>
+        <option value="2000x2000">2000 × 2000</option>
+        <option value="custom">Custom</option>
+      </select>
+
+      <div id="customMaterial" style="display:none;">
+        <input type="number" id="customW" placeholder="Bredd (mm)" />
+        <input type="number" id="customH" placeholder="Höjd (mm)" />
+      </div>
+
+      <div id="materialInfo"></div>
+    </aside>
+
+    <main id="viewer">
+      <canvas id="canvas"></canvas>
+      <div id="overlay">Ladda DXF-filer för att börja</div>
+    </main>
+  </div>
+
+  <!-- DXF Parser -->
+  <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
