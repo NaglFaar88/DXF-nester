@@ -2,7 +2,7 @@
 <html lang="sv">
 <head>
   <meta charset="UTF-8" />
-  <title>DXF Nester (M1)</title>
+  <title>DXF Nester (M1.1)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -11,7 +11,6 @@
     <aside id="sidebar">
       <h2>DXF-filer</h2>
       <input type="file" id="fileInput" accept=".dxf" multiple />
-      <div id="fileList"></div>
 
       <h3>Material (mm)</h3>
       <select id="materialSelect">
@@ -30,6 +29,8 @@
       </div>
 
       <div id="materialInfo"></div>
+
+      <div id="fileList"></div>
     </aside>
 
     <main id="viewer">
@@ -38,7 +39,6 @@
     </main>
   </div>
 
-  <!-- DXF Parser -->
   <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
   <script src="main.js"></script>
 </body>
