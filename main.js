@@ -199,13 +199,17 @@ mm = snapped.pt;
   if (!measureP1 || (measureP1 && measureP2)) {
     measureP1 = mm;
     measureP2 = null;
-    measureReadout.textContent = 'Välj punkt 2...';
+measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
+
   } else {
     measureP2 = mm;
     const dx = measureP2.xMm - measureP1.xMm;
     const dy = measureP2.yMm - measureP1.yMm;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    measureReadout.textContent = `Avstånd: ${dist.toFixed(1)} mm`;
+measureReadout.textContent = snapped.note
+  ? `Avstånd: ${dist.toFixed(1)} mm (snäpp: ${snapped.note})`
+  : `Avstånd: ${dist.toFixed(1)} mm`;
+
   }
 
   draw();
