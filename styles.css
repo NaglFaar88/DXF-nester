@@ -23,15 +23,23 @@ body, html { margin: 0; height: 100%; }
   position: relative;
 }
 
+.file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .file-title {
   font-weight: bold;
-  padding-right: 26px;
+  font-size: 13px;
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 .file-remove {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+  flex: 0 0 auto;
   width: 22px;
   height: 22px;
   border: 1px solid #bbb;
@@ -41,9 +49,11 @@ body, html { margin: 0; height: 100%; }
   line-height: 18px;
   text-align: center;
   font-size: 14px;
+  padding: 0;
 }
 
 .file-remove:hover { background: #eee; }
+
 
 .file-item label { display: block; font-size: 12px; margin-top: 6px; }
 
