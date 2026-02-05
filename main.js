@@ -82,8 +82,11 @@ function renderFileList() {
     const dimText = boundsToText(p.bounds);
 
     div.innerHTML = `
-      <div class="file-title">${escapeHtml(p.name)}</div>
-      <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
+      <div class="file-header">
+        <div class="file-title">${escapeHtml(p.name)}</div>
+        <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
+      </div>
+
 
       <label>Antal:
         <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
