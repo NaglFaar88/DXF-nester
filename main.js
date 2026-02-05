@@ -1,5 +1,6 @@
 const fileInput = document.getElementById('fileInput');
 const fileListEl = document.getElementById('fileList');
+
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
@@ -8,10 +9,22 @@ const customMaterial = document.getElementById('customMaterial');
 const customW = document.getElementById('customW');
 const customH = document.getElementById('customH');
 const materialInfo = document.getElementById('materialInfo');
+
 const overlay = document.getElementById('overlay');
+const measureBtn = document.getElementById('measureBtn');
+const measureStatus = document.getElementById('measureStatus');
+const measureReadout = document.getElementById('measureReadout');
 
 let parts = [];
 let material = { w: 1000, h: 1000 };
+
+// View transform for mapping screen <-> mm on material
+let view = { scale: 1, ox: 20, oy: 20, matWpx: 0, matHpx: 0 };
+
+// Measure state
+let measureOn = false;
+let measureP1 = null; // {xMm,yMm}
+let measureP2 = null;
 
 function resizeCanvas() {
   canvas.width = canvas.clientWidth;
@@ -34,7 +47,6 @@ function updateMaterialFromUI() {
   updateMaterialInfo();
   draw();
 }
-
 materialSelect.addEventListener('change', updateMaterialFromUI);
 customW.addEventListener('input', updateMaterialFromUI);
 customH.addEventListener('input', updateMaterialFromUI);
@@ -48,8 +60,8 @@ fileInput.addEventListener('change', async (e) => {
   for (const file of files) {
     const text = await file.text();
     const parser = new window.DxfParser();
-
     let dxf;
+
     try {
       dxf = parser.parseSync(text);
     } catch (err) {
@@ -59,6 +71,7 @@ fileInput.addEventListener('change', async (e) => {
     }
 
     const bounds = getBounds(dxf);
+
     parts.push({
       id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
       name: file.name,
@@ -68,6 +81,7 @@ fileInput.addEventListener('change', async (e) => {
       visible: true
     });
   }
+
   renderFileList();
   draw();
 });
@@ -75,11 +89,9 @@ fileInput.addEventListener('change', async (e) => {
 function renderFileList() {
   fileListEl.innerHTML = '';
 
-  parts.forEach((p, idx) => {
+  parts.forEach((p) => {
     const div = document.createElement('div');
     div.className = 'file-item';
-
-    const dimText = boundsToText(p.bounds);
 
     div.innerHTML = `
       <div class="file-header">
@@ -87,22 +99,28 @@ function renderFileList() {
         <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
       </div>
 
+      <div class="file-body">
+        <canvas class="thumb" width="52" height="52" data-id="${p.id}"></canvas>
 
-      <label>Antal:
-        <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
-      </label>
+        <div class="file-fields">
+          <label>Antal:
+            <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
+          </label>
 
-      <label>
-        <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
-        Visa
-      </label>
+          <label>
+            <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
+            Visa
+          </label>
 
-      <div>Mått: ${dimText}</div>
+          <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
+        </div>
+      </div>
     `;
 
     fileListEl.appendChild(div);
   });
 
+  // bind qty
   fileListEl.querySelectorAll('.qty-input').forEach(input => {
     input.addEventListener('input', (e) => {
       const id = e.target.dataset.id;
@@ -112,6 +130,7 @@ function renderFileList() {
     });
   });
 
+  // bind visible
   fileListEl.querySelectorAll('.vis-input').forEach(input => {
     input.addEventListener('change', (e) => {
       const id = e.target.dataset.id;
@@ -122,6 +141,7 @@ function renderFileList() {
     });
   });
 
+  // bind remove
   fileListEl.querySelectorAll('.file-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.id;
@@ -131,13 +151,216 @@ function renderFileList() {
     });
   });
 
-  overlay.textContent = parts.length ? 'Pan/zoom kommer senare. M1.1: mått + lista + material.' : 'Ladda DXF-filer för att börja';
+  // draw thumbnails
+  fileListEl.querySelectorAll('.thumb').forEach(c => {
+    const id = c.dataset.id;
+    const p = parts.find(x => x.id === id);
+    if (!p) return;
+    drawThumbnail(p, c);
+  });
+
+  overlay.textContent = parts.length
+    ? 'M2: material + mätning + previews i sidebar.'
+    : 'Ladda DXF-filer för att börja';
 }
 
-function boundsToText(b) {
-  if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) {
-    return 'Okänt';
+measureBtn.addEventListener('click', () => {
+  measureOn = !measureOn;
+  if (!measureOn) {
+    measureP1 = null;
+    measureP2 = null;
+    measureReadout.textContent = '';
   }
+  updateMeasureUI();
+  draw();
+});
+
+function updateMeasureUI() {
+  measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
+}
+
+canvas.addEventListener('click', (ev) => {
+  if (!measureOn) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const sx = ev.clientX - rect.left;
+  const sy = ev.clientY - rect.top;
+
+  const mm = screenToMm(sx, sy);
+  if (!mm) return; // click outside material
+
+  if (!measureP1 || (measureP1 && measureP2)) {
+    measureP1 = mm;
+    measureP2 = null;
+    measureReadout.textContent = 'Välj punkt 2...';
+  } else {
+    measureP2 = mm;
+    const dx = measureP2.xMm - measureP1.xMm;
+    const dy = measureP2.yMm - measureP1.yMm;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    measureReadout.textContent = `Avstånd: ${dist.toFixed(1)} mm`;
+  }
+
+  draw();
+});
+
+function screenToMm(sx, sy) {
+  // map to material local coords
+  const x = (sx - view.ox) / view.scale;
+  const y = (sy - view.oy) / view.scale;
+
+  if (x < 0 || y < 0 || x > material.w || y > material.h) return null;
+  return { xMm: x, yMm: y };
+}
+
+function mmToScreen(xMm, yMm) {
+  return {
+    sx: view.ox + xMm * view.scale,
+    sy: view.oy + yMm * view.scale
+  };
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const safeW = Math.max(1, material.w);
+  const safeH = Math.max(1, material.h);
+
+  const scale = Math.min(canvas.width / safeW, canvas.height / safeH) * 0.92;
+  const ox = 20;
+  const oy = 20;
+
+  view = {
+    scale,
+    ox,
+    oy,
+    matWpx: safeW * scale,
+    matHpx: safeH * scale
+  };
+
+  // material outline
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
+
+  // draw measure
+  if (measureP1) {
+    const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
+    drawCross(p1.sx, p1.sy);
+
+    if (measureP2) {
+      const p2 = mmToScreen(measureP2.xMm, measureP2.yMm);
+      drawCross(p2.sx, p2.sy);
+
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p1.sx, p1.sy);
+      ctx.lineTo(p2.sx, p2.sy);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawCross(x, y) {
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x - 6, y);
+  ctx.lineTo(x + 6, y);
+  ctx.moveTo(x, y - 6);
+  ctx.lineTo(x, y + 6);
+  ctx.stroke();
+}
+
+function drawThumbnail(part, thumbCanvas) {
+  const tctx = thumbCanvas.getContext('2d');
+  tctx.clearRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+
+  const b = part.bounds;
+  if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) {
+    // placeholder
+    tctx.strokeStyle = '#bbb';
+    tctx.strokeRect(6, 6, thumbCanvas.width - 12, thumbCanvas.height - 12);
+    return;
+  }
+
+  const pad = 6;
+  const w = thumbCanvas.width - pad * 2;
+  const h = thumbCanvas.height - pad * 2;
+  const s = Math.min(w / b.w, h / b.h);
+
+  const entities = part.dxf?.entities || [];
+
+  // helper map mm -> thumb px
+  const mapX = (x) => pad + (x - b.minX) * s;
+  const mapY = (y) => pad + (b.maxY - y) * s; // flip Y for screen
+
+  // background frame
+  tctx.strokeStyle = '#e0e0e0';
+  tctx.strokeRect(pad, pad, w, h);
+
+  tctx.strokeStyle = '#111';
+  tctx.lineWidth = 1;
+
+  for (const ent of entities) {
+    // POLYLINE/LWPOLYLINE via vertices
+    if (Array.isArray(ent.vertices) && ent.vertices.length) {
+      tctx.beginPath();
+      ent.vertices.forEach((v, i) => {
+        const x = mapX(v.x);
+        const y = mapY(v.y);
+        if (i === 0) tctx.moveTo(x, y);
+        else tctx.lineTo(x, y);
+      });
+      tctx.stroke();
+      continue;
+    }
+
+    // LINE
+    if (ent.type === 'LINE' && ent.start && ent.end) {
+      tctx.beginPath();
+      tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
+      tctx.lineTo(mapX(ent.end.x), mapY(ent.end.y));
+      tctx.stroke();
+      continue;
+    }
+
+    // CIRCLE (approx)
+    if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = mapX(ent.center.x);
+      const cy = mapY(ent.center.y);
+      const r = ent.radius * s;
+      tctx.beginPath();
+      tctx.arc(cx, cy, r, 0, Math.PI * 2);
+      tctx.stroke();
+      continue;
+    }
+
+    // ARC (approx)
+    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
+      const a0 = degToRad(ent.startAngle ?? 0);
+      const a1 = degToRad(ent.endAngle ?? 0);
+      const pts = arcPoints(cx, cy, r, a0, a1, 24);
+      if (pts.length) {
+        tctx.beginPath();
+        pts.forEach((pt, i) => {
+          const x = mapX(pt.x);
+          const y = mapY(pt.y);
+          if (i === 0) tctx.moveTo(x, y);
+          else tctx.lineTo(x, y);
+        });
+        tctx.stroke();
+      }
+      continue;
+    }
+  }
+}
+
+// Bounds helpers
+function boundsToText(b) {
+  if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) return 'Okänt';
   return `${Math.round(b.w)} × ${Math.round(b.h)} mm`;
 }
 
@@ -147,7 +370,7 @@ function getBounds(dxf) {
   if (!ents.length) return invalidBounds();
 
   for (const ent of ents) {
-    // 1) Polyline-ish
+    // polyline-ish
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       for (const v of ent.vertices) {
         if (isFinitePoint(v)) {
@@ -160,24 +383,20 @@ function getBounds(dxf) {
       continue;
     }
 
-    // 2) LINE
+    // LINE
     if (ent.type === 'LINE' && ent.start && ent.end) {
       if (isFinitePoint(ent.start)) {
-        minX = Math.min(minX, ent.start.x);
-        minY = Math.min(minY, ent.start.y);
-        maxX = Math.max(maxX, ent.start.x);
-        maxY = Math.max(maxY, ent.start.y);
+        minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y);
+        maxX = Math.max(maxX, ent.start.x); maxY = Math.max(maxY, ent.start.y);
       }
       if (isFinitePoint(ent.end)) {
-        minX = Math.min(minX, ent.end.x);
-        minY = Math.min(minY, ent.end.y);
-        maxX = Math.max(maxX, ent.end.x);
-        maxY = Math.max(maxY, ent.end.y);
+        minX = Math.min(minX, ent.end.x); minY = Math.min(minY, ent.end.y);
+        maxX = Math.max(maxX, ent.end.x); maxY = Math.max(maxY, ent.end.y);
       }
       continue;
     }
 
-    // 3) CIRCLE
+    // CIRCLE
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       if (Number.isFinite(cx) && Number.isFinite(cy)) {
@@ -189,22 +408,19 @@ function getBounds(dxf) {
       continue;
     }
 
-    // 4) ARC (approximera bounds genom att testa nyckelvinklar)
+    // ARC
     if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       const a0 = degToRad(ent.startAngle ?? 0);
       const a1 = degToRad(ent.endAngle ?? 0);
-
       if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
 
       const angles = arcSampleAngles(a0, a1);
       for (const a of angles) {
         const x = cx + r * Math.cos(a);
         const y = cy + r * Math.sin(a);
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
       }
       continue;
     }
@@ -213,7 +429,6 @@ function getBounds(dxf) {
   if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
     return invalidBounds();
   }
-
   const w = maxX - minX;
   const h = maxY - minY;
   if (!Number.isFinite(w) || !Number.isFinite(h)) return invalidBounds();
@@ -231,10 +446,7 @@ function isFinitePoint(p) {
 
 function degToRad(d) { return (d * Math.PI) / 180; }
 
-// Returnerar en lista av vinklar att testa för bounds: start/end + kardinaler inom sweep
 function arcSampleAngles(a0, a1) {
-  // DXF arcs går CCW från startAngle till endAngle (vanligtvis).
-  // Vi normaliserar till [0, 2pi) och säkerställer sweep CCW.
   const TWO_PI = Math.PI * 2;
   const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
 
@@ -243,8 +455,8 @@ function arcSampleAngles(a0, a1) {
   if (e < s) e += TWO_PI;
 
   const angles = [s, e];
-
   const cardinals = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, TWO_PI];
+
   for (const c of cardinals) {
     let cc = c;
     if (cc < s) cc += TWO_PI;
@@ -253,44 +465,21 @@ function arcSampleAngles(a0, a1) {
   return angles;
 }
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function arcPoints(cx, cy, r, a0, a1, steps = 24) {
+  const TWO_PI = Math.PI * 2;
+  const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
 
-  // Rita material
-  const safeW = Math.max(1, material.w);
-  const safeH = Math.max(1, material.h);
+  let s = norm(a0);
+  let e = norm(a1);
+  if (e < s) e += TWO_PI;
 
-  const scale = Math.min(canvas.width / safeW, canvas.height / safeH) * 0.92;
-  const matW = safeW * scale;
-  const matH = safeH * scale;
-
-  ctx.strokeStyle = '#0f0';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(20, 20, matW, matH);
-
-  // Rita delar som "preview-rektanglar" (ännu ingen geometri/nesting)
-  let offsetY = 50;
-  ctx.lineWidth = 1;
-  ctx.font = '12px Arial';
-
-  for (const p of parts) {
-    if (!p.visible) continue;
-
-    const bw = (Number.isFinite(p.bounds?.w) ? p.bounds.w : 0);
-    const bh = (Number.isFinite(p.bounds?.h) ? p.bounds.h : 0);
-
-    // Skala ner preview så de inte blir gigantiska
-    const w = Math.max(8, bw * scale * 0.08);
-    const h = Math.max(8, bh * scale * 0.08);
-
-    ctx.strokeStyle = '#fff';
-    ctx.strokeRect(40, offsetY, w, h);
-
-    ctx.fillStyle = '#fff';
-    ctx.fillText(`${p.name} (x${p.qty})`, 50 + w, offsetY + 12);
-
-    offsetY += h + 18;
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const a = s + (e - s) * t;
+    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
   }
+  return pts;
 }
 
 function escapeHtml(str) {
@@ -302,6 +491,8 @@ function escapeHtml(str) {
     .replaceAll("'", '&#039;');
 }
 
+// init
 updateMaterialInfo();
+updateMeasureUI();
 renderFileList();
 draw();
