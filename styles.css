@@ -124,10 +124,12 @@ input[type="number"] { width: 100%; margin-top: 5px; }
 .thumb-wide {
   display: block;
   width: 100%;
-  height: 70px;           /* visuell höjd i UI */
+  aspect-ratio: 12 / 7;   /* matchar 240x140 */
+  height: auto;
   margin: 6px 0 8px;
   border: 1px solid #ddd;
   background: #fafafa;
   border-radius: 6px;
 }
+
 
