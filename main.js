@@ -99,7 +99,7 @@ div.innerHTML = `
     <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
   </div>
 
-  <canvas class="thumb thumb-wide" width="120" height="60" data-id="${p.id}"></canvas>
+  <canvas class="thumb thumb-wide" width="240" height="140" data-id="${p.id}"></canvas>
 
   <div class="file-fields">
     <label>Antal:
