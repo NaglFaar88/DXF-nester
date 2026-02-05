@@ -274,15 +274,99 @@ function drawCross(x, y) {
 
 function drawThumbnail(part, thumbCanvas) {
   const tctx = thumbCanvas.getContext('2d');
-  tctx.clearRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+  const W = thumbCanvas.width;
+  const H = thumbCanvas.height;
+
+  tctx.clearRect(0, 0, W, H);
 
   const b = part.bounds;
   if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) {
-    // placeholder
     tctx.strokeStyle = '#bbb';
-    tctx.strokeRect(6, 6, thumbCanvas.width - 12, thumbCanvas.height - 12);
+    tctx.strokeRect(6, 6, W - 12, H - 12);
     return;
   }
+
+  const pad = 10;
+  const innerW = W - pad * 2;
+  const innerH = H - pad * 2;
+
+  // UNIFORM scaling (viktig!)
+  const s = Math.min(innerW / b.w, innerH / b.h);
+
+  // Centering offsets (så formen hamnar snyggt i mitten)
+  const drawW = b.w * s;
+  const drawH = b.h * s;
+  const offsetX = pad + (innerW - drawW) / 2;
+  const offsetY = pad + (innerH - drawH) / 2;
+
+  // Map mm -> canvas px (flip Y)
+  const mapX = (x) => offsetX + (x - b.minX) * s;
+  const mapY = (y) => offsetY + (b.maxY - y) * s;
+
+  // Ram
+  tctx.strokeStyle = '#e6e6e6';
+  tctx.lineWidth = 1;
+  tctx.strokeRect(pad, pad, innerW, innerH);
+
+  tctx.strokeStyle = '#111';
+  tctx.lineWidth = 1;
+
+  const entities = part.dxf?.entities || [];
+  for (const ent of entities) {
+    // POLYLINE/LWPOLYLINE via vertices
+    if (Array.isArray(ent.vertices) && ent.vertices.length) {
+      tctx.beginPath();
+      ent.vertices.forEach((v, i) => {
+        const x = mapX(v.x);
+        const y = mapY(v.y);
+        if (i === 0) tctx.moveTo(x, y);
+        else tctx.lineTo(x, y);
+      });
+      tctx.stroke();
+      continue;
+    }
+
+    // LINE
+    if (ent.type === 'LINE' && ent.start && ent.end) {
+      tctx.beginPath();
+      tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
+      tctx.lineTo(mapX(ent.end.x), mapY(ent.end.y));
+      tctx.stroke();
+      continue;
+    }
+
+    // CIRCLE
+    if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = mapX(ent.center.x);
+      const cy = mapY(ent.center.y);
+      const r = ent.radius * s;
+      tctx.beginPath();
+      tctx.arc(cx, cy, r, 0, Math.PI * 2);
+      tctx.stroke();
+      continue;
+    }
+
+    // ARC (approx)
+    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
+      const a0 = degToRad(ent.startAngle ?? 0);
+      const a1 = degToRad(ent.endAngle ?? 0);
+      const pts = arcPoints(cx, cy, r, a0, a1, 32);
+      if (pts.length) {
+        tctx.beginPath();
+        pts.forEach((pt, i) => {
+          const x = mapX(pt.x);
+          const y = mapY(pt.y);
+          if (i === 0) tctx.moveTo(x, y);
+          else tctx.lineTo(x, y);
+        });
+        tctx.stroke();
+      }
+      continue;
+    }
+  }
+}
+
 
   const pad = 6;
   const w = thumbCanvas.width - pad * 2;
