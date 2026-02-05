@@ -28,6 +28,8 @@ let view = { scale: 1, ox: 20, oy: 20, matWpx: 0, matHpx: 0 };
 let measureOn = false;
 let measureP1 = null; // {xMm,yMm}
 let measureP2 = null;
+let hoverSnap = null; // {xMm, yMm, note}
+
 
 function resizeCanvas() {
   canvas.width = canvas.clientWidth;
@@ -190,7 +192,8 @@ canvas.addEventListener('click', (ev) => {
   let mm = screenToMm(sx, sy);
   if (!mm) return; // click outside material
 
-  const snapped = applySnap(mm);
+  const snapped = applySnap(mm, ev.shiftKey);
+
   mm = snapped.pt;
 
   if (!measureP1 || (measureP1 && measureP2)) {
@@ -211,6 +214,37 @@ canvas.addEventListener('click', (ev) => {
   draw();
 });
 
+canvas.addEventListener('mousemove', (ev) => {
+  if (!measureOn) {
+    hoverSnap = null;
+    draw();
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const sx = ev.clientX - rect.left;
+  const sy = ev.clientY - rect.top;
+
+  const mm = screenToMm(sx, sy);
+  if (!mm) {
+    hoverSnap = null;
+    draw();
+    return;
+  }
+
+  const snapped = applySnap(mm, ev.shiftKey);
+
+  // Visa bara preview när Shift hålls och vi är nära kant/hörn
+  if (ev.shiftKey && snapped.note) {
+    hoverSnap = { ...snapped.pt, note: snapped.note };
+  } else {
+    hoverSnap = null;
+  }
+
+  draw();
+});
+
+
 function screenToMm(sx, sy) {
   const x = (sx - view.ox) / view.scale;
   const y = (sy - view.oy) / view.scale;
@@ -223,7 +257,10 @@ function mmToScreen(xMm, yMm) {
   return { sx: view.ox + xMm * view.scale, sy: view.oy + yMm * view.scale };
 }
 
-function applySnap(mmPt) {
+function applySnap(mmPt, shiftKey) {
+  // Mjukt snäpp: bara om Shift hålls nere
+  if (!shiftKey) return { pt: mmPt, note: '' };
+
   const enabled = !!snapEnabledEl?.checked;
   if (!enabled) return { pt: mmPt, note: '' };
 
@@ -253,6 +290,7 @@ function applySnap(mmPt) {
   return { pt: { xMm, yMm }, note };
 }
 
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -268,6 +306,16 @@ function draw() {
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
+
+  // Snäpp-preview (endast när Shift hålls och vi är nära kant/hörn)
+if (hoverSnap) {
+  const p = mmToScreen(hoverSnap.xMm, hoverSnap.yMm);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(p.sx, p.sy, 7, 0, Math.PI * 2);
+  ctx.stroke();
+}
 
   if (measureP1) {
     const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
