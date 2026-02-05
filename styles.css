@@ -78,3 +78,28 @@ input[type="number"] { width: 100%; margin-top: 5px; }
   font-size: 12px;
   color: #333;
 }
+
+#toolbar {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: rgba(0,0,0,0.6);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+#toolbar button {
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#measureHint {
+  font-size: 12px;
+  color: #ddd;
+}
+
