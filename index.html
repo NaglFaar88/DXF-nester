@@ -2,7 +2,7 @@
 <html lang="sv">
 <head>
   <meta charset="UTF-8" />
-  <title>DXF Nester (M1.1)</title>
+  <title>DXF Nester (M2)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -33,15 +33,16 @@
       <div id="fileList"></div>
     </aside>
 
-<main id="viewer">
-  <div id="toolbar">
-    <button id="measureBtn">Mät</button>
-    <span id="measureHint">Mätläge av</span>
-  </div>
-  <canvas id="canvas"></canvas>
-  <div id="overlay">Pan/zoom kommer senare. M1.1: mått + lista + material.</div>
-</main>
+    <main id="viewer">
+      <div id="toolbar">
+        <button id="measureBtn" type="button">Mät</button>
+        <span id="measureStatus">Mätläge av</span>
+        <span id="measureReadout"></span>
+      </div>
 
+      <canvas id="canvas"></canvas>
+      <div id="overlay">Ladda DXF-filer för att börja</div>
+    </main>
   </div>
 
   <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
