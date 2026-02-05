@@ -183,17 +183,22 @@ measureBtn.addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Shift') {
     shiftDown = true;
-    if (measureOn) draw();
+    if (measureOn) {
+      measureReadout.textContent = `Snäppzon: PÅ (±${Number(snapTolEl.value || 0)} mm)`;
+      draw();
+    }
   }
 });
+
 
 window.addEventListener('keyup', (e) => {
   if (e.key === 'Shift') {
     shiftDown = false;
-    hoverSnap = null; // släck ringen direkt när shift släpps
+    hoverSnap = null;
     if (measureOn) draw();
   }
 });
+
 
 
 function updateMeasureUI() {
@@ -340,30 +345,49 @@ if (measureOn && shiftDown && snapEnabledEl?.checked) {
     const tolPx = Math.max(2, tolMm * view.scale);
 
     ctx.save();
-    // Klipp så vi inte ritar utanför materialytan
+
+    // Klipp till materialytan
     ctx.beginPath();
     ctx.rect(ox, oy, view.matWpx, view.matHpx);
     ctx.clip();
 
-    // Svag grön ton (använd RGBA så det syns men inte stör)
-    ctx.fillStyle = 'rgba(0, 255, 0, 0.08)';
+    // 1) Tydlig dashed “snäpp-linje” innanför kanten (gul/cyan syns mot svart + grön ram)
+    ctx.strokeStyle = 'rgba(255, 220, 0, 0.9)'; // gul
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
 
-    // Vänster band
+    // Vänster linje
+    ctx.beginPath();
+    ctx.moveTo(ox + tolPx, oy);
+    ctx.lineTo(ox + tolPx, oy + view.matHpx);
+    ctx.stroke();
+
+    // Höger linje
+    ctx.beginPath();
+    ctx.moveTo(ox + view.matWpx - tolPx, oy);
+    ctx.lineTo(ox + view.matWpx - tolPx, oy + view.matHpx);
+    ctx.stroke();
+
+    // Topp linje
+    ctx.beginPath();
+    ctx.moveTo(ox, oy + tolPx);
+    ctx.lineTo(ox + view.matWpx, oy + tolPx);
+    ctx.stroke();
+
+    // Botten linje
+    ctx.beginPath();
+    ctx.moveTo(ox, oy + view.matHpx - tolPx);
+    ctx.lineTo(ox + view.matWpx, oy + view.matHpx - tolPx);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+
+    // 2) Subtil fyllning (valfri) - nu i gult så den syns
+    ctx.fillStyle = 'rgba(255, 220, 0, 0.05)';
     ctx.fillRect(ox, oy, tolPx, view.matHpx);
-    // Höger band
     ctx.fillRect(ox + view.matWpx - tolPx, oy, tolPx, view.matHpx);
-    // Topp band
     ctx.fillRect(ox, oy, view.matWpx, tolPx);
-    // Botten band
     ctx.fillRect(ox, oy + view.matHpx - tolPx, view.matWpx, tolPx);
-
-    // Hörn-lite extra markering (subtilt)
-    ctx.fillStyle = 'rgba(0, 255, 0, 0.12)';
-    const c = Math.min(tolPx, 18);
-    ctx.fillRect(ox, oy, c, c);
-    ctx.fillRect(ox + view.matWpx - c, oy, c, c);
-    ctx.fillRect(ox, oy + view.matHpx - c, c, c);
-    ctx.fillRect(ox + view.matWpx - c, oy + view.matHpx - c, c, c);
 
     ctx.restore();
   }
