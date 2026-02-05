@@ -202,14 +202,22 @@ canvas.addEventListener('click', (ev) => {
     measureP2 = null;
     measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
   } else {
-    measureP2 = mm;
-    const dx = measureP2.xMm - measureP1.xMm;
-    const dy = measureP2.yMm - measureP1.yMm;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+measureP2 = mm;
+const dx = measureP2.xMm - measureP1.xMm;
+const dy = measureP2.yMm - measureP1.yMm;
+const dist = Math.sqrt(dx * dx + dy * dy);
 
-    measureReadout.textContent = snapped.note
-      ? `Avstånd: ${dist.toFixed(1)} mm (snäpp: ${snapped.note})`
-      : `Avstånd: ${dist.toFixed(1)} mm`;
+// vinkel i grader, 0° = +X (åt höger), 90° = +Y (nedåt i vår mm-koordinat)
+// Vi normaliserar till 0..360
+let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+if (angleDeg < 0) angleDeg += 360;
+
+const base = `ΔX: ${dx.toFixed(1)} mm, ΔY: ${dy.toFixed(1)} mm, L: ${dist.toFixed(1)} mm, θ: ${angleDeg.toFixed(1)}°`;
+
+measureReadout.textContent = snapped.note
+  ? `${base} (snäpp: ${snapped.note})`
+  : base;
+
   }
 
   draw();
