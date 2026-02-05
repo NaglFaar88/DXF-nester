@@ -34,11 +34,24 @@
     </aside>
 
     <main id="viewer">
-      <div id="toolbar">
-        <button id="measureBtn" type="button">Mät</button>
-        <span id="measureStatus">Mätläge av</span>
-        <span id="measureReadout"></span>
-      </div>
+<div id="toolbar">
+  <button id="measureBtn" type="button">Mät</button>
+  <span id="measureStatus">Mätläge av</span>
+
+  <label id="snapWrap">
+    <input type="checkbox" id="snapEnabled" checked />
+    Snäpp
+  </label>
+
+  <label id="snapTolWrap">
+    <span>±</span>
+    <input type="number" id="snapTol" min="0" step="1" value="5" />
+    <span>mm</span>
+  </label>
+
+  <span id="measureReadout"></span>
+</div>
+
 
       <canvas id="canvas"></canvas>
       <div id="overlay">Ladda DXF-filer för att börja</div>
