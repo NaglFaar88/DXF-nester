@@ -33,10 +33,15 @@
       <div id="fileList"></div>
     </aside>
 
-    <main id="viewer">
-      <canvas id="canvas"></canvas>
-      <div id="overlay">Ladda DXF-filer för att börja</div>
-    </main>
+<main id="viewer">
+  <div id="toolbar">
+    <button id="measureBtn">Mät</button>
+    <span id="measureHint">Mätläge av</span>
+  </div>
+  <canvas id="canvas"></canvas>
+  <div id="overlay">Pan/zoom kommer senare. M1.1: mått + lista + material.</div>
+</main>
+
   </div>
 
   <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
