@@ -2,9 +2,9 @@
 <html lang="sv">
 <head>
   <meta charset="UTF-8" />
-  <title>DXF Nester (M2)</title>
+  <title>DXF Nester (M2 + Snäpp)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=7" />
 </head>
 <body>
   <div id="app">
@@ -34,24 +34,23 @@
     </aside>
 
     <main id="viewer">
-<div id="toolbar">
-  <button id="measureBtn" type="button">Mät</button>
-  <span id="measureStatus">Mätläge av</span>
+      <div id="toolbar">
+        <button id="measureBtn" type="button">Mät</button>
+        <span id="measureStatus">Mätläge av</span>
 
-  <label id="snapWrap">
-    <input type="checkbox" id="snapEnabled" checked />
-    Snäpp
-  </label>
+        <label id="snapWrap">
+          <input type="checkbox" id="snapEnabled" checked />
+          Snäpp
+        </label>
 
-  <label id="snapTolWrap">
-    <span>±</span>
-    <input type="number" id="snapTol" min="0" step="1" value="5" />
-    <span>mm</span>
-  </label>
+        <label id="snapTolWrap">
+          <span>±</span>
+          <input type="number" id="snapTol" min="0" step="1" value="5" />
+          <span>mm</span>
+        </label>
 
-  <span id="measureReadout"></span>
-</div>
-
+        <span id="measureReadout"></span>
+      </div>
 
       <canvas id="canvas"></canvas>
       <div id="overlay">Ladda DXF-filer för att börja</div>
@@ -59,6 +58,6 @@
   </div>
 
   <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
-  <script src="main.js?v=2"></script>
+  <script src="main.js?v=7"></script>
 </body>
 </html>
