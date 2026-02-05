@@ -15,6 +15,10 @@ const measureBtn = document.getElementById('measureBtn');
 const measureStatus = document.getElementById('measureStatus');
 const measureReadout = document.getElementById('measureReadout');
 
+const snapEnabledEl = document.getElementById('snapEnabled');
+const snapTolEl = document.getElementById('snapTol');
+
+
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
@@ -185,8 +189,12 @@ canvas.addEventListener('click', (ev) => {
   const sx = ev.clientX - rect.left;
   const sy = ev.clientY - rect.top;
 
-  const mm = screenToMm(sx, sy);
-  if (!mm) return; // click outside material
+let mm = screenToMm(sx, sy);
+if (!mm) return; // click outside material
+
+const snapped = applySnap(mm);
+mm = snapped.pt;
+
 
   if (!measureP1 || (measureP1 && measureP2)) {
     measureP1 = mm;
@@ -218,6 +226,36 @@ function mmToScreen(xMm, yMm) {
     sy: view.oy + yMm * view.scale
   };
 }
+
+function applySnap(mmPt) {
+  const enabled = snapEnabledEl?.checked;
+  if (!enabled) return { pt: mmPt, note: '' };
+
+  const tol = Math.max(0, Number(snapTolEl?.value ?? 0));
+  if (tol <= 0) return { pt: mmPt, note: '' };
+
+  let { xMm, yMm } = mmPt;
+  let note = '';
+
+  const nearLeft = xMm <= tol;
+  const nearRight = (material.w - xMm) <= tol;
+  const nearTop = yMm <= tol;
+  const nearBottom = (material.h - yMm) <= tol;
+
+  if (nearLeft) { xMm = 0; note = note || 'vänsterkant'; }
+  else if (nearRight) { xMm = material.w; note = note || 'högerkant'; }
+
+  if (nearTop) { yMm = 0; note = note ? `hörn (${note}+topp)` : 'toppkant'; }
+  else if (nearBottom) { yMm = material.h; note = note ? `hörn (${note}+botten)` : 'bottenkant'; }
+
+  // Om både X och Y snäpptes, skriv "hörn"
+  if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
+    note = 'hörn';
+  }
+
+  return { pt: { xMm, yMm }, note };
+}
+
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
