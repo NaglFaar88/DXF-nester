@@ -172,6 +172,7 @@ measureBtn.addEventListener('click', () => {
   if (!measureOn) {
     measureP1 = null;
     measureP2 = null;
+    hoverSnap = null;
     measureReadout.textContent = '';
   }
   updateMeasureUI();
