@@ -93,29 +93,28 @@ function renderFileList() {
     const div = document.createElement('div');
     div.className = 'file-item';
 
-    div.innerHTML = `
-      <div class="file-header">
-        <div class="file-title">${escapeHtml(p.name)}</div>
-        <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
-      </div>
+div.innerHTML = `
+  <div class="file-header">
+    <div class="file-title">${escapeHtml(p.name)}</div>
+    <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
+  </div>
 
-      <div class="file-body">
-        <canvas class="thumb" width="52" height="52" data-id="${p.id}"></canvas>
+  <canvas class="thumb thumb-wide" width="120" height="60" data-id="${p.id}"></canvas>
 
-        <div class="file-fields">
-          <label>Antal:
-            <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
-          </label>
+  <div class="file-fields">
+    <label>Antal:
+      <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
+    </label>
 
-          <label>
-            <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
-            Visa
-          </label>
+    <label>
+      <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
+      Visa
+    </label>
 
-          <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
-        </div>
-      </div>
-    `;
+    <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
+  </div>
+`;
+
 
     fileListEl.appendChild(div);
   });
