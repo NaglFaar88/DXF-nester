@@ -18,7 +18,6 @@ const measureReadout = document.getElementById('measureReadout');
 const snapEnabledEl = document.getElementById('snapEnabled');
 const snapTolEl = document.getElementById('snapTol');
 
-
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
@@ -97,28 +96,27 @@ function renderFileList() {
     const div = document.createElement('div');
     div.className = 'file-item';
 
-div.innerHTML = `
-  <div class="file-header">
-    <div class="file-title">${escapeHtml(p.name)}</div>
-    <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
-  </div>
+    div.innerHTML = `
+      <div class="file-header">
+        <div class="file-title">${escapeHtml(p.name)}</div>
+        <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
+      </div>
 
-  <canvas class="thumb thumb-wide" width="240" height="140" data-id="${p.id}"></canvas>
+      <canvas class="thumb-wide" width="240" height="140" data-id="${p.id}"></canvas>
 
-  <div class="file-fields">
-    <label>Antal:
-      <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
-    </label>
+      <div class="file-fields">
+        <label>Antal:
+          <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
+        </label>
 
-    <label>
-      <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
-      Visa
-    </label>
+        <label>
+          <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
+          Visa
+        </label>
 
-    <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
-  </div>
-`;
-
+        <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
+      </div>
+    `;
 
     fileListEl.appendChild(div);
   });
@@ -155,7 +153,7 @@ div.innerHTML = `
   });
 
   // draw thumbnails
-  fileListEl.querySelectorAll('.thumb').forEach(c => {
+  fileListEl.querySelectorAll('canvas[data-id]').forEach(c => {
     const id = c.dataset.id;
     const p = parts.find(x => x.id === id);
     if (!p) return;
@@ -163,7 +161,7 @@ div.innerHTML = `
   });
 
   overlay.textContent = parts.length
-    ? 'M2: material + mätning + previews i sidebar.'
+    ? 'M2 + Snäpp: material + mätning + previews i sidebar.'
     : 'Ladda DXF-filer för att börja';
 }
 
@@ -189,34 +187,31 @@ canvas.addEventListener('click', (ev) => {
   const sx = ev.clientX - rect.left;
   const sy = ev.clientY - rect.top;
 
-let mm = screenToMm(sx, sy);
-if (!mm) return; // click outside material
+  let mm = screenToMm(sx, sy);
+  if (!mm) return; // click outside material
 
-const snapped = applySnap(mm);
-mm = snapped.pt;
-
+  const snapped = applySnap(mm);
+  mm = snapped.pt;
 
   if (!measureP1 || (measureP1 && measureP2)) {
     measureP1 = mm;
     measureP2 = null;
-measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
-
+    measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
   } else {
     measureP2 = mm;
     const dx = measureP2.xMm - measureP1.xMm;
     const dy = measureP2.yMm - measureP1.yMm;
     const dist = Math.sqrt(dx * dx + dy * dy);
-measureReadout.textContent = snapped.note
-  ? `Avstånd: ${dist.toFixed(1)} mm (snäpp: ${snapped.note})`
-  : `Avstånd: ${dist.toFixed(1)} mm`;
 
+    measureReadout.textContent = snapped.note
+      ? `Avstånd: ${dist.toFixed(1)} mm (snäpp: ${snapped.note})`
+      : `Avstånd: ${dist.toFixed(1)} mm`;
   }
 
   draw();
 });
 
 function screenToMm(sx, sy) {
-  // map to material local coords
   const x = (sx - view.ox) / view.scale;
   const y = (sy - view.oy) / view.scale;
 
@@ -225,41 +220,38 @@ function screenToMm(sx, sy) {
 }
 
 function mmToScreen(xMm, yMm) {
-  return {
-    sx: view.ox + xMm * view.scale,
-    sy: view.oy + yMm * view.scale
-  };
+  return { sx: view.ox + xMm * view.scale, sy: view.oy + yMm * view.scale };
 }
 
 function applySnap(mmPt) {
-  const enabled = snapEnabledEl?.checked;
+  const enabled = !!snapEnabledEl?.checked;
   if (!enabled) return { pt: mmPt, note: '' };
 
   const tol = Math.max(0, Number(snapTolEl?.value ?? 0));
   if (tol <= 0) return { pt: mmPt, note: '' };
 
   let { xMm, yMm } = mmPt;
-  let note = '';
 
   const nearLeft = xMm <= tol;
   const nearRight = (material.w - xMm) <= tol;
   const nearTop = yMm <= tol;
   const nearBottom = (material.h - yMm) <= tol;
 
-  if (nearLeft) { xMm = 0; note = note || 'vänsterkant'; }
-  else if (nearRight) { xMm = material.w; note = note || 'högerkant'; }
+  let snappedX = false, snappedY = false;
 
-  if (nearTop) { yMm = 0; note = note ? `hörn (${note}+topp)` : 'toppkant'; }
-  else if (nearBottom) { yMm = material.h; note = note ? `hörn (${note}+botten)` : 'bottenkant'; }
+  if (nearLeft) { xMm = 0; snappedX = true; }
+  else if (nearRight) { xMm = material.w; snappedX = true; }
 
-  // Om både X och Y snäpptes, skriv "hörn"
-  if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
-    note = 'hörn';
-  }
+  if (nearTop) { yMm = 0; snappedY = true; }
+  else if (nearBottom) { yMm = material.h; snappedY = true; }
+
+  let note = '';
+  if (snappedX && snappedY) note = 'hörn';
+  else if (snappedX) note = (xMm === 0) ? 'vänsterkant' : 'högerkant';
+  else if (snappedY) note = (yMm === 0) ? 'toppkant' : 'bottenkant';
 
   return { pt: { xMm, yMm }, note };
 }
-
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -271,20 +263,12 @@ function draw() {
   const ox = 20;
   const oy = 20;
 
-  view = {
-    scale,
-    ox,
-    oy,
-    matWpx: safeW * scale,
-    matHpx: safeH * scale
-  };
+  view = { scale, ox, oy, matWpx: safeW * scale, matHpx: safeH * scale };
 
-  // material outline
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
 
-  // draw measure
   if (measureP1) {
     const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
     drawCross(p1.sx, p1.sy);
@@ -332,20 +316,16 @@ function drawThumbnail(part, thumbCanvas) {
   const innerW = W - pad * 2;
   const innerH = H - pad * 2;
 
-  // UNIFORM scaling (viktig!)
   const s = Math.min(innerW / b.w, innerH / b.h);
 
-  // Centering offsets (så formen hamnar snyggt i mitten)
   const drawW = b.w * s;
   const drawH = b.h * s;
   const offsetX = pad + (innerW - drawW) / 2;
   const offsetY = pad + (innerH - drawH) / 2;
 
-  // Map mm -> canvas px (flip Y)
   const mapX = (x) => offsetX + (x - b.minX) * s;
   const mapY = (y) => offsetY + (b.maxY - y) * s;
 
-  // Ram
   tctx.strokeStyle = '#e6e6e6';
   tctx.lineWidth = 1;
   tctx.strokeRect(pad, pad, innerW, innerH);
@@ -355,7 +335,6 @@ function drawThumbnail(part, thumbCanvas) {
 
   const entities = part.dxf?.entities || [];
   for (const ent of entities) {
-    // POLYLINE/LWPOLYLINE via vertices
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       tctx.beginPath();
       ent.vertices.forEach((v, i) => {
@@ -368,7 +347,6 @@ function drawThumbnail(part, thumbCanvas) {
       continue;
     }
 
-    // LINE
     if (ent.type === 'LINE' && ent.start && ent.end) {
       tctx.beginPath();
       tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
@@ -377,7 +355,6 @@ function drawThumbnail(part, thumbCanvas) {
       continue;
     }
 
-    // CIRCLE
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
       const cx = mapX(ent.center.x);
       const cy = mapY(ent.center.y);
@@ -388,86 +365,11 @@ function drawThumbnail(part, thumbCanvas) {
       continue;
     }
 
-    // ARC (approx)
     if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       const a0 = degToRad(ent.startAngle ?? 0);
       const a1 = degToRad(ent.endAngle ?? 0);
       const pts = arcPoints(cx, cy, r, a0, a1, 32);
-      if (pts.length) {
-        tctx.beginPath();
-        pts.forEach((pt, i) => {
-          const x = mapX(pt.x);
-          const y = mapY(pt.y);
-          if (i === 0) tctx.moveTo(x, y);
-          else tctx.lineTo(x, y);
-        });
-        tctx.stroke();
-      }
-      continue;
-    }
-  }
-}
-
-
-  const pad = 6;
-  const w = thumbCanvas.width - pad * 2;
-  const h = thumbCanvas.height - pad * 2;
-  const s = Math.min(w / b.w, h / b.h);
-
-  const entities = part.dxf?.entities || [];
-
-  // helper map mm -> thumb px
-  const mapX = (x) => pad + (x - b.minX) * s;
-  const mapY = (y) => pad + (b.maxY - y) * s; // flip Y for screen
-
-  // background frame
-  tctx.strokeStyle = '#e0e0e0';
-  tctx.strokeRect(pad, pad, w, h);
-
-  tctx.strokeStyle = '#111';
-  tctx.lineWidth = 1;
-
-  for (const ent of entities) {
-    // POLYLINE/LWPOLYLINE via vertices
-    if (Array.isArray(ent.vertices) && ent.vertices.length) {
-      tctx.beginPath();
-      ent.vertices.forEach((v, i) => {
-        const x = mapX(v.x);
-        const y = mapY(v.y);
-        if (i === 0) tctx.moveTo(x, y);
-        else tctx.lineTo(x, y);
-      });
-      tctx.stroke();
-      continue;
-    }
-
-    // LINE
-    if (ent.type === 'LINE' && ent.start && ent.end) {
-      tctx.beginPath();
-      tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
-      tctx.lineTo(mapX(ent.end.x), mapY(ent.end.y));
-      tctx.stroke();
-      continue;
-    }
-
-    // CIRCLE (approx)
-    if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
-      const cx = mapX(ent.center.x);
-      const cy = mapY(ent.center.y);
-      const r = ent.radius * s;
-      tctx.beginPath();
-      tctx.arc(cx, cy, r, 0, Math.PI * 2);
-      tctx.stroke();
-      continue;
-    }
-
-    // ARC (approx)
-    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
-      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
-      const a0 = degToRad(ent.startAngle ?? 0);
-      const a1 = degToRad(ent.endAngle ?? 0);
-      const pts = arcPoints(cx, cy, r, a0, a1, 24);
       if (pts.length) {
         tctx.beginPath();
         pts.forEach((pt, i) => {
@@ -495,7 +397,6 @@ function getBounds(dxf) {
   if (!ents.length) return invalidBounds();
 
   for (const ent of ents) {
-    // polyline-ish
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       for (const v of ent.vertices) {
         if (isFinitePoint(v)) {
@@ -508,7 +409,6 @@ function getBounds(dxf) {
       continue;
     }
 
-    // LINE
     if (ent.type === 'LINE' && ent.start && ent.end) {
       if (isFinitePoint(ent.start)) {
         minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y);
@@ -521,7 +421,6 @@ function getBounds(dxf) {
       continue;
     }
 
-    // CIRCLE
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       if (Number.isFinite(cx) && Number.isFinite(cy)) {
@@ -533,7 +432,6 @@ function getBounds(dxf) {
       continue;
     }
 
-    // ARC
     if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       const a0 = degToRad(ent.startAngle ?? 0);
