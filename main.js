@@ -29,6 +29,7 @@ let measureOn = false;
 let measureP1 = null; // {xMm,yMm}
 let measureP2 = null;
 let hoverSnap = null; // {xMm, yMm, note}
+let shiftDown = false;
 
 
 function resizeCanvas() {
@@ -179,6 +180,22 @@ measureBtn.addEventListener('click', () => {
   draw();
 });
 
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') {
+    shiftDown = true;
+    if (measureOn) draw();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') {
+    shiftDown = false;
+    hoverSnap = null; // släck ringen direkt när shift släpps
+    if (measureOn) draw();
+  }
+});
+
+
 function updateMeasureUI() {
   measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
 }
@@ -315,6 +332,42 @@ function draw() {
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
+
+  // Snäppzon-visning: endast i mätläge + Shift + snäpp aktiverat + tol > 0
+if (measureOn && shiftDown && snapEnabledEl?.checked) {
+  const tolMm = Math.max(0, Number(snapTolEl?.value ?? 0));
+  if (tolMm > 0) {
+    const tolPx = Math.max(2, tolMm * view.scale);
+
+    ctx.save();
+    // Klipp så vi inte ritar utanför materialytan
+    ctx.beginPath();
+    ctx.rect(ox, oy, view.matWpx, view.matHpx);
+    ctx.clip();
+
+    // Svag grön ton (använd RGBA så det syns men inte stör)
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.08)';
+
+    // Vänster band
+    ctx.fillRect(ox, oy, tolPx, view.matHpx);
+    // Höger band
+    ctx.fillRect(ox + view.matWpx - tolPx, oy, tolPx, view.matHpx);
+    // Topp band
+    ctx.fillRect(ox, oy, view.matWpx, tolPx);
+    // Botten band
+    ctx.fillRect(ox, oy + view.matHpx - tolPx, view.matWpx, tolPx);
+
+    // Hörn-lite extra markering (subtilt)
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.12)';
+    const c = Math.min(tolPx, 18);
+    ctx.fillRect(ox, oy, c, c);
+    ctx.fillRect(ox + view.matWpx - c, oy, c, c);
+    ctx.fillRect(ox, oy + view.matHpx - c, c, c);
+    ctx.fillRect(ox + view.matWpx - c, oy + view.matHpx - c, c, c);
+
+    ctx.restore();
+  }
+}
 
   // Snäpp-preview (endast när Shift hålls och vi är nära kant/hörn)
 if (hoverSnap) {
