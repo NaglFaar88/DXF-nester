@@ -1,88 +1,123 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="sv">
 <head>
-  <meta charset="UTF-8" />
-  <title>DXF Nester (M2)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- bumpa v= när du vill tvinga cache refresh -->
-  <link rel="stylesheet" href="styles.css?v=11" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DXF Nest Viewer</title>
+
+  <link rel="stylesheet" href="styles.css?v=1" />
+
+  <!-- DXF parser (cdn). Om du redan har detta på annat sätt, behåll din lösning. -->
+  <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.min.js"></script>
 </head>
+
 <body>
-  <div id="app">
-    <aside id="sidebar">
-      <h2>DXF-filer</h2>
-      <input type="file" id="fileInput" accept=".dxf" multiple />
-
-      <h3>Material (mm)</h3>
-      <select id="materialSelect">
-        <option value="1000x1000">1000 × 1000</option>
-        <option value="1200x1200">1200 × 1200</option>
-        <option value="1500x1500">1500 × 1500</option>
-        <option value="1000x2000">1000 × 2000</option>
-        <option value="2000x1500">2000 × 1500</option>
-        <option value="2000x2000">2000 × 2000</option>
-        <option value="custom">Custom</option>
-      </select>
-
-      <div id="customMaterial" style="display:none;">
-        <input type="number" id="customW" placeholder="Bredd (mm)" />
-        <input type="number" id="customH" placeholder="Höjd (mm)" />
+  <div class="app">
+    <!-- LEFT: sidebar -->
+    <aside class="sidebar">
+      <div class="panel">
+        <div class="panel-title">Ladda DXF</div>
+        <input id="fileInput" type="file" accept=".dxf" multiple />
+        <div id="overlay" class="hint">Ladda DXF-filer för att börja</div>
       </div>
 
-      <div id="materialInfo"></div>
+      <div class="panel">
+        <div class="panel-title">Material</div>
 
-      <h3>Nestning (M3)</h3>
+        <select id="materialSelect">
+          <option value="1000x1000">1000 × 1000</option>
+          <option value="1200x1200">1200 × 1200</option>
+          <option value="1500x1500">1500 × 1500</option>
+          <option value="1000x2000">1000 × 2000</option>
+          <option value="2000x1500">2000 × 1500</option>
+          <option value="2000x2000">2000 × 2000</option>
+          <option value="custom">Custom size (mm)</option>
+        </select>
 
-<label style="display:block;font-size:12px;margin-top:6px;">
-  Mellanrum (mm):
-  <input type="number" id="gapMm" min="0" step="1" value="5" />
-</label>
+        <div id="customMaterial" style="display:none; margin-top:10px;">
+          <div class="row">
+            <label style="flex:1;">
+              Bredd (mm)
+              <input id="customW" type="number" min="1" value="1000" />
+            </label>
+            <label style="flex:1;">
+              Höjd (mm)
+              <input id="customH" type="number" min="1" value="1000" />
+            </label>
+          </div>
+        </div>
 
-<label style="display:block;font-size:12px;margin-top:6px;">
-  <input type="checkbox" id="allowRotate" checked />
-  Tillåt rotation 90°
-</label>
+        <div id="materialInfo" class="small" style="margin-top:8px;">Material: 1000 × 1000 mm</div>
+      </div>
 
-<button id="nestBtn" type="button" style="margin-top:8px;width:100%;">Nesta</button>
+      <div class="panel">
+        <div class="panel-title">Mätning</div>
 
-<div id="nestNav" style="margin-top:8px;display:none;">
-  <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;">
-    <button id="prevSheetBtn" type="button">◀</button>
-    <div id="sheetInfo" style="font-size:12px;">Ark: 1/1</div>
-    <button id="nextSheetBtn" type="button">▶</button>
-  </div>
-  <div id="nestStats" style="margin-top:6px;font-size:12px;"></div>
-</div>
+        <div class="row" style="align-items:center;">
+          <button id="measureBtn" class="btn">Mät</button>
+          <div id="measureStatus" class="badge">Mätläge av</div>
+        </div>
 
+        <div id="measureReadout" class="readout"></div>
 
-      <div id="fileList"></div>
+        <div class="divider"></div>
+
+        <div class="panel-title" style="margin-top:0;">Snäpp (Shift)</div>
+        <label class="row" style="align-items:center;">
+          <input id="snapEnabled" type="checkbox" checked />
+          <span>Aktivera snäpp</span>
+        </label>
+
+        <label style="display:block; margin-top:8px;">
+          Tolerans (mm)
+          <input id="snapTol" type="number" min="0" step="0.1" value="10" />
+        </label>
+
+        <div class="small" style="margin-top:8px;">
+          Tips: Håll <b>Shift</b> för mjukt snäpp mot materialets kanter/hörn.
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Nestning (M3.1)</div>
+
+        <label style="display:block;">
+          Gap (mm)
+          <input id="gapMm" type="number" min="0" step="0.1" value="5" />
+        </label>
+
+        <label class="row" style="align-items:center; margin-top:8px;">
+          <input id="allowRotate" type="checkbox" checked />
+          <span>Tillåt rotation (90°)</span>
+        </label>
+
+        <button id="nestBtn" class="btn" style="margin-top:10px; width:100%;">Nesta</button>
+
+        <div id="nestNav" style="display:none; margin-top:12px;">
+          <div class="row" style="align-items:center;">
+            <button id="prevSheetBtn" class="btn btn-secondary">◀</button>
+            <div id="sheetInfo" class="badge" style="flex:1; text-align:center;">Ark: 1/1</div>
+            <button id="nextSheetBtn" class="btn btn-secondary">▶</button>
+          </div>
+          <div id="nestStats" class="small" style="margin-top:8px;"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Filer</div>
+        <div id="fileList" class="file-list"></div>
+      </div>
     </aside>
 
-    <main id="viewer">
-      <div id="toolbar">
-        <button id="measureBtn" type="button">Mät</button>
-        <span id="measureStatus">Mätläge av</span>
-
-        <label id="snapWrap" title="Snäpp gäller endast när du håller Shift">
-          <input type="checkbox" id="snapEnabled" checked />
-          Snäpp (Shift)
-        </label>
-
-        <label id="snapTolWrap" title="Snäpp-tolerans i mm (gäller bara med Shift)">
-          <span>±</span>
-          <input type="number" id="snapTol" min="0" step="1" value="5" />
-          <span>mm</span>
-        </label>
-
-        <span id="measureReadout"></span>
+    <!-- RIGHT: canvas -->
+    <main class="main">
+      <div class="canvas-wrap">
+        <canvas id="canvas"></canvas>
       </div>
-
-      <canvas id="canvas"></canvas>
-      <div id="overlay">Ladda DXF-filer för att börja</div>
     </main>
   </div>
 
-  <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
-  <script src="main.js?v=11"></script>
+  <!-- bumpa ?v=... när du ändrar main.js så cache inte spökar -->
+  <script src="main.js?v=1"></script>
 </body>
 </html>
