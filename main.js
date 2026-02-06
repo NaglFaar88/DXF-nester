@@ -1,5 +1,6 @@
 const fileInput = document.getElementById('fileInput');
 const fileListEl = document.getElementById('fileList');
+
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
@@ -8,51 +9,27 @@ const customMaterial = document.getElementById('customMaterial');
 const customW = document.getElementById('customW');
 const customH = document.getElementById('customH');
 const materialInfo = document.getElementById('materialInfo');
-const overlay = document.getElementById('overlay');
 
+const overlay = document.getElementById('overlay');
 const measureBtn = document.getElementById('measureBtn');
-const measureHint = document.getElementById('measureHint');
+const measureStatus = document.getElementById('measureStatus');
+const measureReadout = document.getElementById('measureReadout');
 
 const snapEnabledEl = document.getElementById('snapEnabled');
 const snapTolEl = document.getElementById('snapTol');
-const snapStatusEl = document.getElementById('snapStatus');
 
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
-// Mätning
-let measureMode = false;
-let measureStart = null;
-let lastMeasure = null;
-let hoverPoint = null;
+// View transform for mapping screen <-> mm on material
+let view = { scale: 1, ox: 20, oy: 20, matWpx: 0, matHpx: 0 };
 
-// Shift => används bara för snäpp (aldrig för att nollställa mätning)
-let isShiftDown = false;
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Shift') {
-    isShiftDown = true;
-    updateSnapStatus();
-    draw();
-  }
-});
-window.addEventListener('keyup', (ev) => {
-  if (ev.key === 'Shift') {
-    isShiftDown = false;
-    updateSnapStatus();
-    draw();
-  }
-});
-
-function updateSnapStatus() {
-  const tol = Number(snapTolEl.value || 0);
-  const enabled = !!snapEnabledEl.checked;
-  const active = enabled && isShiftDown;
-  snapStatusEl.textContent = active ? `Snäppzon: PÅ (±${tol} mm)` : `Snäppzon: AV`;
-}
-
-snapEnabledEl.addEventListener('change', () => { updateSnapStatus(); draw(); });
-snapTolEl.addEventListener('input', () => { updateSnapStatus(); draw(); });
+// Measure state
+let measureOn = false;
+let measureP1 = null; // {xMm,yMm}
+let measureP2 = null;
+let hoverSnap = null; // {xMm, yMm, note}
+let shiftDown = false;
 
 function resizeCanvas() {
   canvas.width = canvas.clientWidth;
@@ -88,8 +65,8 @@ fileInput.addEventListener('change', async (e) => {
   for (const file of files) {
     const text = await file.text();
     const parser = new window.DxfParser();
-
     let dxf;
+
     try {
       dxf = parser.parseSync(text);
     } catch (err) {
@@ -99,6 +76,7 @@ fileInput.addEventListener('change', async (e) => {
     }
 
     const bounds = getBounds(dxf);
+
     parts.push({
       id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
       name: file.name,
@@ -108,9 +86,6 @@ fileInput.addEventListener('change', async (e) => {
       visible: true
     });
   }
-
-  // låt samma fil gå att väljas igen senare
-  fileInput.value = '';
 
   renderFileList();
   draw();
@@ -129,30 +104,36 @@ function renderFileList() {
         <button class="file-remove" title="Ta bort" data-id="${p.id}">✕</button>
       </div>
 
-      <label>Antal:
-        <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
-      </label>
+      <canvas class="thumb-wide" width="240" height="140" data-id="${p.id}"></canvas>
 
-      <label>
-        <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
-        Visa
-      </label>
+      <div class="file-fields">
+        <label>Antal:
+          <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
+        </label>
 
-      <div>Mått: ${boundsToText(p.bounds)}</div>
+        <label>
+          <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
+          Visa
+        </label>
+
+        <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
+      </div>
     `;
+
     fileListEl.appendChild(div);
   });
 
+  // bind qty
   fileListEl.querySelectorAll('.qty-input').forEach(input => {
     input.addEventListener('input', (e) => {
       const id = e.target.dataset.id;
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.qty = Math.max(1, Number(e.target.value || 1));
-      draw();
     });
   });
 
+  // bind visible
   fileListEl.querySelectorAll('.vis-input').forEach(input => {
     input.addEventListener('change', (e) => {
       const id = e.target.dataset.id;
@@ -163,6 +144,7 @@ function renderFileList() {
     });
   });
 
+  // bind remove
   fileListEl.querySelectorAll('.file-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.id;
@@ -172,240 +154,364 @@ function renderFileList() {
     });
   });
 
+  // draw thumbnails
+  fileListEl.querySelectorAll('canvas[data-id]').forEach(c => {
+    const id = c.dataset.id;
+    const p = parts.find(x => x.id === id);
+    if (!p) return;
+    drawThumbnail(p, c);
+  });
+
   overlay.textContent = parts.length
-    ? 'M2: Mät med knapp. Shift = snäpp (om aktiverat).'
+    ? 'M2 + QoL: material + mätning + previews + (Shift) snäpp.'
     : 'Ladda DXF-filer för att börja';
 }
 
-function boundsToText(b) {
-  if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) return 'Okänt';
-  return `${Math.round(b.w)} × ${Math.round(b.h)} mm`;
+measureBtn.addEventListener('click', () => {
+  measureOn = !measureOn;
+  if (!measureOn) {
+    measureP1 = null;
+    measureP2 = null;
+    hoverSnap = null;
+    measureReadout.textContent = '';
+  }
+  updateMeasureUI();
+  draw();
+});
+
+function updateMeasureUI() {
+  measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
 }
 
-/** ===== Mätläge ===== */
+// Track Shift so draw() can show snap zone reliably
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') {
+    shiftDown = true;
+    if (measureOn) draw();
+  }
+});
 
-measureBtn.addEventListener('click', () => {
-  measureMode = !measureMode;
-  measureStart = null;
-  lastMeasure = null;
-  hoverPoint = null;
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') {
+    shiftDown = false;
+    hoverSnap = null;
+    if (measureOn) draw();
+  }
+});
 
-  measureBtn.textContent = measureMode ? 'Avbryt mät' : 'Mät';
-  measureHint.textContent = measureMode ? 'Mätläge på: klicka två punkter' : 'Mätläge av';
+canvas.addEventListener('click', (ev) => {
+  if (!measureOn) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const sx = ev.clientX - rect.left;
+  const sy = ev.clientY - rect.top;
+
+  let mm = screenToMm(sx, sy);
+  if (!mm) return; // click outside material
+
+  const snapped = applySnap(mm, ev.shiftKey);
+  mm = snapped.pt;
+
+  if (!measureP1 || (measureP1 && measureP2)) {
+    measureP1 = mm;
+    measureP2 = null;
+    measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
+  } else {
+    measureP2 = mm;
+
+    const dx = measureP2.xMm - measureP1.xMm;
+    const dy = measureP2.yMm - measureP1.yMm;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // 0° = höger, 90° = ned (pga skärmkoordinater)
+    let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    if (angleDeg < 0) angleDeg += 360;
+
+    const base = `ΔX: ${dx.toFixed(1)} mm, ΔY: ${dy.toFixed(1)} mm, L: ${dist.toFixed(1)} mm, θ: ${angleDeg.toFixed(1)}°`;
+    measureReadout.textContent = snapped.note ? `${base} (snäpp: ${snapped.note})` : base;
+  }
+
   draw();
 });
 
-canvas.addEventListener('mousemove', (e) => {
-  if (!measureMode) return;
-  hoverPoint = getCanvasPoint(e);
-  draw();
-});
-
-canvas.addEventListener('mouseleave', () => {
-  hoverPoint = null;
-  if (measureMode) draw();
-});
-
-canvas.addEventListener('click', (e) => {
-  if (!measureMode) return;
-
-  const raw = getCanvasPoint(e);
-  const p = maybeSnap(raw);
-
-  if (!measureStart) {
-    measureStart = p;
+canvas.addEventListener('mousemove', (ev) => {
+  if (!measureOn) {
+    hoverSnap = null;
     draw();
     return;
   }
 
-  const dx = p.x - measureStart.x;
-  const dy = p.y - measureStart.y;
-  const pxDist = Math.sqrt(dx * dx + dy * dy);
+  const rect = canvas.getBoundingClientRect();
+  const sx = ev.clientX - rect.left;
+  const sy = ev.clientY - rect.top;
 
-  const scale = currentScale(); // px per mm
-  const mmDist = pxDist / scale;
+  const mm = screenToMm(sx, sy);
+  if (!mm) {
+    hoverSnap = null;
+    draw();
+    return;
+  }
 
-  lastMeasure = { x1: measureStart.x, y1: measureStart.y, x2: p.x, y2: p.y, mm: mmDist };
-  measureStart = null;
-  hoverPoint = null;
+  const snapped = applySnap(mm, ev.shiftKey);
+
+  // Preview only when Shift and near edge/corner snap
+  if (ev.shiftKey && snapped.note) {
+    hoverSnap = { ...snapped.pt, note: snapped.note };
+  } else {
+    hoverSnap = null;
+  }
+
   draw();
 });
 
-function getCanvasPoint(e) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+function screenToMm(sx, sy) {
+  const x = (sx - view.ox) / view.scale;
+  const y = (sy - view.oy) / view.scale;
+
+  if (x < 0 || y < 0 || x > material.w || y > material.h) return null;
+  return { xMm: x, yMm: y };
 }
 
-/** ===== Snäpp =====
- * Snäpp är endast aktivt om:
- * - checkbox är ibockad
- * - Shift hålls nere
- */
-function maybeSnap(pt) {
-  const enabled = !!snapEnabledEl.checked;
-  const snappingNow = enabled && isShiftDown;
-  if (!snappingNow) return pt;
-
-  const tolMm = Number(snapTolEl.value || 0);
-  const tolPx = tolMm * currentScale();
-
-  const snapPoints = getSnapPoints();
-  let best = null;
-  let bestD = Infinity;
-
-  for (const sp of snapPoints) {
-    const dx = sp.x - pt.x;
-    const dy = sp.y - pt.y;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    if (d < bestD) {
-      bestD = d;
-      best = sp;
-    }
-  }
-
-  if (best && bestD <= tolPx) return { x: best.x, y: best.y, snapped: true };
-  return pt;
+function mmToScreen(xMm, yMm) {
+  return { sx: view.ox + xMm * view.scale, sy: view.oy + yMm * view.scale };
 }
 
-function currentScale() {
-  const safeW = Math.max(1, material.w);
-  const safeH = Math.max(1, material.h);
-  return Math.min(canvas.width / safeW, canvas.height / safeH) * 0.92; // px per mm
+function applySnap(mmPt, shiftKey) {
+  // Soft snap: only if Shift is held
+  if (!shiftKey) return { pt: mmPt, note: '' };
+
+  const enabled = !!snapEnabledEl?.checked;
+  if (!enabled) return { pt: mmPt, note: '' };
+
+  const tol = Math.max(0, Number(snapTolEl?.value ?? 0));
+  if (tol <= 0) return { pt: mmPt, note: '' };
+
+  let { xMm, yMm } = mmPt;
+
+  const nearLeft = xMm <= tol;
+  const nearRight = (material.w - xMm) <= tol;
+  const nearTop = yMm <= tol;
+  const nearBottom = (material.h - yMm) <= tol;
+
+  let snappedX = false, snappedY = false;
+
+  if (nearLeft) { xMm = 0; snappedX = true; }
+  else if (nearRight) { xMm = material.w; snappedX = true; }
+
+  if (nearTop) { yMm = 0; snappedY = true; }
+  else if (nearBottom) { yMm = material.h; snappedY = true; }
+
+  let note = '';
+  if (snappedX && snappedY) note = 'hörn';
+  else if (snappedX) note = (xMm === 0) ? 'vänsterkant' : 'högerkant';
+  else if (snappedY) note = (yMm === 0) ? 'toppkant' : 'bottenkant';
+
+  return { pt: { xMm, yMm }, note };
 }
-
-// Snap-punkter: materialhörn + preview-rektanglars hörn
-function getSnapPoints() {
-  const pts = [];
-  const scale = currentScale();
-
-  const safeW = Math.max(1, material.w);
-  const safeH = Math.max(1, material.h);
-  const matW = safeW * scale;
-  const matH = safeH * scale;
-
-  const x0 = 20, y0 = 20;
-  const x1 = x0 + matW, y1 = y0 + matH;
-
-  pts.push({ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y1 });
-
-  let offsetY = 50;
-  for (const p of parts) {
-    if (!p.visible) continue;
-
-    const bw = (Number.isFinite(p.bounds?.w) ? p.bounds.w : 0);
-    const bh = (Number.isFinite(p.bounds?.h) ? p.bounds.h : 0);
-
-    const w = Math.max(12, bw * scale * 0.08);
-    const h = Math.max(12, bh * scale * 0.08);
-
-    const rx0 = 40;
-    const ry0 = offsetY;
-    const rx1 = rx0 + w;
-    const ry1 = ry0 + h;
-
-    pts.push({ x: rx0, y: ry0 }, { x: rx1, y: ry0 }, { x: rx0, y: ry1 }, { x: rx1, y: ry1 });
-    offsetY += h + 18;
-  }
-
-  if (measureStart) pts.push({ x: measureStart.x, y: measureStart.y });
-  return pts;
-}
-
-/** ===== Drawing ===== */
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Material
-  const scale = currentScale();
   const safeW = Math.max(1, material.w);
   const safeH = Math.max(1, material.h);
-  const matW = safeW * scale;
-  const matH = safeH * scale;
 
+  const scale = Math.min(canvas.width / safeW, canvas.height / safeH) * 0.92;
+  const ox = 20;
+  const oy = 20;
+
+  view = { scale, ox, oy, matWpx: safeW * scale, matHpx: safeH * scale };
+
+  // Material outline
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
-  ctx.strokeRect(20, 20, matW, matH);
+  ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
 
-  // Preview av delar (rektanglar)
-  let offsetY = 50;
-  ctx.lineWidth = 1;
-  ctx.font = '12px Arial';
+  // Snap zone visibility: measureOn + Shift + snap enabled + tol > 0
+  if (measureOn && shiftDown && snapEnabledEl?.checked) {
+    const tolMm = Math.max(0, Number(snapTolEl?.value ?? 0));
+    if (tolMm > 0) {
+      const tolPx = Math.max(2, tolMm * view.scale);
 
-  for (const p of parts) {
-    if (!p.visible) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(ox, oy, view.matWpx, view.matHpx);
+      ctx.clip();
 
-    const bw = (Number.isFinite(p.bounds?.w) ? p.bounds.w : 0);
-    const bh = (Number.isFinite(p.bounds?.h) ? p.bounds.h : 0);
+      // Dashed inner snap lines (yellow) - very visible
+      ctx.strokeStyle = 'rgba(255, 220, 0, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
 
-    const w = Math.max(12, bw * scale * 0.08);
-    const h = Math.max(12, bh * scale * 0.08);
+      ctx.beginPath();
+      ctx.moveTo(ox + tolPx, oy);
+      ctx.lineTo(ox + tolPx, oy + view.matHpx);
+      ctx.stroke();
 
+      ctx.beginPath();
+      ctx.moveTo(ox + view.matWpx - tolPx, oy);
+      ctx.lineTo(ox + view.matWpx - tolPx, oy + view.matHpx);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(ox, oy + tolPx);
+      ctx.lineTo(ox + view.matWpx, oy + tolPx);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(ox, oy + view.matHpx - tolPx);
+      ctx.lineTo(ox + view.matWpx, oy + view.matHpx - tolPx);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+
+      // Light fill (yellow-ish)
+      ctx.fillStyle = 'rgba(255, 220, 0, 0.05)';
+      ctx.fillRect(ox, oy, tolPx, view.matHpx);
+      ctx.fillRect(ox + view.matWpx - tolPx, oy, tolPx, view.matHpx);
+      ctx.fillRect(ox, oy, view.matWpx, tolPx);
+      ctx.fillRect(ox, oy + view.matHpx - tolPx, view.matWpx, tolPx);
+
+      ctx.restore();
+    }
+  }
+
+  // Snap preview ring
+  if (hoverSnap) {
+    const p = mmToScreen(hoverSnap.xMm, hoverSnap.yMm);
     ctx.strokeStyle = '#fff';
-    ctx.strokeRect(40, offsetY, w, h);
-
-    ctx.fillStyle = '#fff';
-    ctx.fillText(`${p.name} (x${p.qty})`, 50 + w, offsetY + 12);
-
-    offsetY += h + 18;
-  }
-
-  // Pågående mätning: streckad “gummisnodd”
-  if (measureMode && measureStart && hoverPoint) {
-    const hp = maybeSnap(hoverPoint);
-
-    ctx.save();
-    ctx.setLineDash([6, 6]);
-    ctx.strokeStyle = '#ff0';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(measureStart.x, measureStart.y);
-    ctx.lineTo(hp.x, hp.y);
+    ctx.arc(p.sx, p.sy, 7, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.restore();
   }
 
-  // Slutlig mätning: hel linje + text
-  if (lastMeasure) {
-    ctx.strokeStyle = '#ff0';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(lastMeasure.x1, lastMeasure.y1);
-    ctx.lineTo(lastMeasure.x2, lastMeasure.y2);
-    ctx.stroke();
+  // Measure points/line
+  if (measureP1) {
+    const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
+    drawCross(p1.sx, p1.sy);
 
-    // kryss i ändpunkter
-    drawCross(lastMeasure.x1, lastMeasure.y1);
-    drawCross(lastMeasure.x2, lastMeasure.y2);
+    if (measureP2) {
+      const p2 = mmToScreen(measureP2.xMm, measureP2.yMm);
+      drawCross(p2.sx, p2.sy);
 
-    const mx = (lastMeasure.x1 + lastMeasure.x2) / 2;
-    const my = (lastMeasure.y1 + lastMeasure.y2) / 2;
-
-    ctx.fillStyle = '#ff0';
-    ctx.font = '12px Arial';
-    ctx.fillText(`${lastMeasure.mm.toFixed(1)} mm`, mx + 6, my - 6);
-  }
-
-  // Startpunkt-markering
-  if (measureMode && measureStart) {
-    ctx.strokeStyle = '#ff0';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(measureStart.x, measureStart.y, 4, 0, Math.PI * 2);
-    ctx.stroke();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p1.sx, p1.sy);
+      ctx.lineTo(p2.sx, p2.sy);
+      ctx.stroke();
+    }
   }
 }
 
 function drawCross(x, y) {
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(x - 5, y);
-  ctx.lineTo(x + 5, y);
-  ctx.moveTo(x, y - 5);
-  ctx.lineTo(x, y + 5);
+  ctx.moveTo(x - 6, y);
+  ctx.lineTo(x + 6, y);
+  ctx.moveTo(x, y - 6);
+  ctx.lineTo(x, y + 6);
   ctx.stroke();
 }
 
-/** ===== Bounds (DXF) ===== */
+function drawThumbnail(part, thumbCanvas) {
+  const tctx = thumbCanvas.getContext('2d');
+  const W = thumbCanvas.width;
+  const H = thumbCanvas.height;
+
+  tctx.clearRect(0, 0, W, H);
+
+  const b = part.bounds;
+  if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) {
+    tctx.strokeStyle = '#bbb';
+    tctx.strokeRect(6, 6, W - 12, H - 12);
+    return;
+  }
+
+  const pad = 10;
+  const innerW = W - pad * 2;
+  const innerH = H - pad * 2;
+
+  // Uniform scaling + centering
+  const s = Math.min(innerW / b.w, innerH / b.h);
+  const drawW = b.w * s;
+  const drawH = b.h * s;
+  const offsetX = pad + (innerW - drawW) / 2;
+  const offsetY = pad + (innerH - drawH) / 2;
+
+  const mapX = (x) => offsetX + (x - b.minX) * s;
+  const mapY = (y) => offsetY + (b.maxY - y) * s;
+
+  // Frame
+  tctx.strokeStyle = '#e6e6e6';
+  tctx.lineWidth = 1;
+  tctx.strokeRect(pad, pad, innerW, innerH);
+
+  tctx.strokeStyle = '#111';
+  tctx.lineWidth = 1;
+
+  const entities = part.dxf?.entities || [];
+  for (const ent of entities) {
+    // POLYLINE/LWPOLYLINE style via vertices
+    if (Array.isArray(ent.vertices) && ent.vertices.length) {
+      tctx.beginPath();
+      ent.vertices.forEach((v, i) => {
+        const x = mapX(v.x);
+        const y = mapY(v.y);
+        if (i === 0) tctx.moveTo(x, y);
+        else tctx.lineTo(x, y);
+      });
+      tctx.stroke();
+      continue;
+    }
+
+    // LINE
+    if (ent.type === 'LINE' && ent.start && ent.end) {
+      tctx.beginPath();
+      tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
+      tctx.lineTo(mapX(ent.end.x), mapY(ent.end.y));
+      tctx.stroke();
+      continue;
+    }
+
+    // CIRCLE
+    if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = mapX(ent.center.x);
+      const cy = mapY(ent.center.y);
+      const r = ent.radius * s;
+      tctx.beginPath();
+      tctx.arc(cx, cy, r, 0, Math.PI * 2);
+      tctx.stroke();
+      continue;
+    }
+
+    // ARC (approx)
+    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
+      const a0 = degToRad(ent.startAngle ?? 0);
+      const a1 = degToRad(ent.endAngle ?? 0);
+      const pts = arcPoints(cx, cy, r, a0, a1, 32);
+      if (pts.length) {
+        tctx.beginPath();
+        pts.forEach((pt, i) => {
+          const x = mapX(pt.x);
+          const y = mapY(pt.y);
+          if (i === 0) tctx.moveTo(x, y);
+          else tctx.lineTo(x, y);
+        });
+        tctx.stroke();
+      }
+      continue;
+    }
+  }
+}
+
+// Bounds helpers
+function boundsToText(b) {
+  if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) return 'Okänt';
+  return `${Math.round(b.w)} × ${Math.round(b.h)} mm`;
+}
 
 function getBounds(dxf) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -413,7 +519,7 @@ function getBounds(dxf) {
   if (!ents.length) return invalidBounds();
 
   for (const ent of ents) {
-    // Polyline-ish
+    // vertices-based
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       for (const v of ent.vertices) {
         if (isFinitePoint(v)) {
@@ -429,16 +535,12 @@ function getBounds(dxf) {
     // LINE
     if (ent.type === 'LINE' && ent.start && ent.end) {
       if (isFinitePoint(ent.start)) {
-        minX = Math.min(minX, ent.start.x);
-        minY = Math.min(minY, ent.start.y);
-        maxX = Math.max(maxX, ent.start.x);
-        maxY = Math.max(maxY, ent.start.y);
+        minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y);
+        maxX = Math.max(maxX, ent.start.x); maxY = Math.max(maxY, ent.start.y);
       }
       if (isFinitePoint(ent.end)) {
-        minX = Math.min(minX, ent.end.x);
-        minY = Math.min(minY, ent.end.y);
-        maxX = Math.max(maxX, ent.end.x);
-        maxY = Math.max(maxY, ent.end.y);
+        minX = Math.min(minX, ent.end.x); minY = Math.min(minY, ent.end.y);
+        maxX = Math.max(maxX, ent.end.x); maxY = Math.max(maxY, ent.end.y);
       }
       continue;
     }
@@ -466,10 +568,8 @@ function getBounds(dxf) {
       for (const a of angles) {
         const x = cx + r * Math.cos(a);
         const y = cy + r * Math.sin(a);
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
       }
       continue;
     }
@@ -478,7 +578,6 @@ function getBounds(dxf) {
   if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
     return invalidBounds();
   }
-
   const w = maxX - minX;
   const h = maxY - minY;
   if (!Number.isFinite(w) || !Number.isFinite(h)) return invalidBounds();
@@ -506,12 +605,30 @@ function arcSampleAngles(a0, a1) {
 
   const angles = [s, e];
   const cardinals = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, TWO_PI];
+
   for (const c of cardinals) {
     let cc = c;
     if (cc < s) cc += TWO_PI;
     if (cc >= s && cc <= e) angles.push(cc);
   }
   return angles;
+}
+
+function arcPoints(cx, cy, r, a0, a1, steps = 24) {
+  const TWO_PI = Math.PI * 2;
+  const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
+
+  let s = norm(a0);
+  let e = norm(a1);
+  if (e < s) e += TWO_PI;
+
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const a = s + (e - s) * t;
+    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+  }
+  return pts;
 }
 
 function escapeHtml(str) {
@@ -525,6 +642,6 @@ function escapeHtml(str) {
 
 // init
 updateMaterialInfo();
+updateMeasureUI();
 renderFileList();
-updateSnapStatus();
 draw();
