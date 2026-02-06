@@ -18,6 +18,19 @@ const measureReadout = document.getElementById('measureReadout');
 const snapEnabledEl = document.getElementById('snapEnabled');
 const snapTolEl = document.getElementById('snapTol');
 
+const gapMmEl = document.getElementById('gapMm');
+const allowRotateEl = document.getElementById('allowRotate');
+const nestBtn = document.getElementById('nestBtn');
+
+const nestNav = document.getElementById('nestNav');
+const prevSheetBtn = document.getElementById('prevSheetBtn');
+const nextSheetBtn = document.getElementById('nextSheetBtn');
+const sheetInfoEl = document.getElementById('sheetInfo');
+const nestStatsEl = document.getElementById('nestStats');
+
+let nestSheets = null;     // [{ placements: [...], usedArea: number }]
+let currentSheet = 0;
+
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
@@ -252,8 +265,195 @@ canvas.addEventListener('mousemove', (ev) => {
     return;
   }
 
+nestBtn.addEventListener('click', () => {
+  runNesting();
+});
+
+prevSheetBtn.addEventListener('click', () => {
+  if (!nestSheets) return;
+  currentSheet = Math.max(0, currentSheet - 1);
+  updateNestUI();
+  draw();
+});
+
+nextSheetBtn.addEventListener('click', () => {
+  if (!nestSheets) return;
+  currentSheet = Math.min(nestSheets.length - 1, currentSheet + 1);
+  updateNestUI();
+  draw();
+});
+
+  
   const snapped = applySnap(mm, ev.shiftKey);
 
+function runNesting() {
+  const gap = Math.max(0, Number(gapMmEl?.value ?? 0));
+  const allowRot = !!allowRotateEl?.checked;
+
+  // bygg en lista med rektanglar (bounding boxes) från synliga parts
+  const items = [];
+  for (const p of parts) {
+    if (!p.visible) continue;
+    const b = p.bounds;
+    if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) continue;
+
+    const w = b.w;
+    const h = b.h;
+    const qty = Math.max(1, Number(p.qty || 1));
+
+    for (let i = 0; i < qty; i++) {
+      items.push({
+        partId: p.id,
+        name: p.name,
+        w,
+        h
+      });
+    }
+  }
+
+  if (!items.length || material.w <= 0 || material.h <= 0) {
+    nestSheets = null;
+    nestNav.style.display = 'none';
+    overlay.textContent = 'Inget att nesta (kontrollera filer/material).';
+    draw();
+    return;
+  }
+
+  // Enkel men effektiv heuristic: sortera största först (area, sedan max-sida)
+  items.sort((a, b) => {
+    const aa = a.w * a.h, bb = b.w * b.h;
+    if (bb !== aa) return bb - aa;
+    return Math.max(b.w, b.h) - Math.max(a.w, a.h);
+  });
+
+  nestSheets = [];
+  currentSheet = 0;
+
+  let sheet = newEmptySheet();
+  let cx = 0;
+  let cy = 0;
+  let shelfH = 0;
+
+  for (const it of items) {
+    // försök placera i aktuell rad, ev. med rotation
+    const choice = chooseOrientationForShelf(it, material.w, material.h, cx, cy, shelfH, gap, allowRot);
+
+    if (!choice) {
+      // ny rad
+      cx = 0;
+      cy = cy + shelfH + gap;
+      shelfH = 0;
+
+      const choice2 = chooseOrientationForShelf(it, material.w, material.h, cx, cy, shelfH, gap, allowRot);
+
+      if (!choice2) {
+        // nytt ark
+        nestSheets.push(sheet);
+        sheet = newEmptySheet();
+        cx = 0; cy = 0; shelfH = 0;
+
+        const choice3 = chooseOrientationForShelf(it, material.w, material.h, cx, cy, shelfH, gap, allowRot);
+        if (!choice3) {
+          // Om den inte ens får plats på tomt ark => material för litet
+          nestSheets.push(sheet);
+          nestSheets = nestSheets.filter(s => s.placements.length); // städa tomma
+          nestNav.style.display = nestSheets.length ? 'block' : 'none';
+          overlay.textContent = `Del "${it.name}" (${Math.round(it.w)}×${Math.round(it.h)} mm) får inte plats på materialet.`;
+          updateNestUI();
+          draw();
+          return;
+        }
+
+        placeItem(sheet, it, choice3, cx, cy);
+        cx += choice3.w + gap;
+        shelfH = Math.max(shelfH, choice3.h);
+        continue;
+      }
+
+      placeItem(sheet, it, choice2, cx, cy);
+      cx += choice2.w + gap;
+      shelfH = Math.max(shelfH, choice2.h);
+      continue;
+    }
+
+    placeItem(sheet, it, choice, cx, cy);
+    cx += choice.w + gap;
+    shelfH = Math.max(shelfH, choice.h);
+  }
+
+  nestSheets.push(sheet);
+  nestNav.style.display = 'block';
+  overlay.textContent = `M3: Nestning (rektanglar). Ark: ${nestSheets.length}`;
+  updateNestUI();
+  draw();
+}
+
+function newEmptySheet() {
+  return { placements: [], usedArea: 0 };
+}
+
+function chooseOrientationForShelf(it, matW, matH, cx, cy, shelfH, gap, allowRot) {
+  // return {w,h,rot} eller null
+  const options = [];
+
+  // 0°
+  options.push({ w: it.w, h: it.h, rot: 0 });
+
+  // 90°
+  if (allowRot && it.w !== it.h) {
+    options.push({ w: it.h, h: it.w, rot: 90 });
+  }
+
+  // filtrera de som får plats i höjd på denna shelf-position (cy + h)
+  const fits = options.filter(o => (cx + o.w) <= matW && (cy + o.h) <= matH);
+
+  if (!fits.length) return null;
+
+  // Heuristic: välj den som lämnar minst “spill” i bredd på raden,
+  // och om lika: välj den som ger lägre shelfH
+  fits.sort((a, b) => {
+    const remA = matW - (cx + a.w);
+    const remB = matW - (cx + b.w);
+    if (remA !== remB) return remA - remB;
+
+    const shA = Math.max(shelfH, a.h);
+    const shB = Math.max(shelfH, b.h);
+    return shA - shB;
+  });
+
+  return fits[0];
+}
+
+function placeItem(sheet, it, choice, x, y) {
+  sheet.placements.push({
+    partId: it.partId,
+    name: it.name,
+    x, y,
+    w: choice.w,
+    h: choice.h,
+    rot: choice.rot
+  });
+  sheet.usedArea += choice.w * choice.h;
+}
+
+function updateNestUI() {
+  if (!nestSheets || !nestSheets.length) {
+    nestNav.style.display = 'none';
+    return;
+  }
+  const total = nestSheets.length;
+  const idx = currentSheet + 1;
+
+  sheetInfoEl.textContent = `Ark: ${idx}/${total}`;
+
+  const matArea = material.w * material.h;
+  const used = nestSheets[currentSheet].usedArea;
+  const pct = matArea > 0 ? (used / matArea) * 100 : 0;
+
+  nestStatsEl.textContent = `Utnyttjande (rektangel): ${pct.toFixed(1)}% | Delar: ${nestSheets[currentSheet].placements.length}`;
+}
+
+  
   // Preview only when Shift and near edge/corner snap
   if (ev.shiftKey && snapped.note) {
     hoverSnap = { ...snapped.pt, note: snapped.note };
@@ -385,6 +585,43 @@ function draw() {
     ctx.stroke();
   }
 
+  // Rita nestade rektanglar (M3) på aktuellt ark
+if (nestSheets && nestSheets.length) {
+  const sheet = nestSheets[currentSheet] || nestSheets[0];
+
+  for (const pl of sheet.placements) {
+    const p0 = mmToScreen(pl.x, pl.y);
+    const p1 = mmToScreen(pl.x + pl.w, pl.y + pl.h);
+
+    const x = p0.sx;
+    const y = p0.sy;
+    const w = p1.sx - p0.sx;
+    const h = p1.sy - p0.sy;
+
+    // färg per part
+    const col = colorFromId(pl.partId);
+
+    ctx.fillStyle = col.fill;
+    ctx.strokeStyle = col.stroke;
+    ctx.lineWidth = 2;
+
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+
+    // liten label (kort)
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = '12px Arial';
+    const label = pl.name.length > 18 ? pl.name.slice(0, 18) + '…' : pl.name;
+    ctx.fillText(label, x + 4, y + 14);
+
+    // visa “R90” om roterad
+    if (pl.rot === 90) {
+      ctx.fillText('R90', x + 4, y + 28);
+    }
+  }
+}
+
+  
   // Measure points/line
   if (measureP1) {
     const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
@@ -639,6 +876,18 @@ function escapeHtml(str) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 }
+
+function colorFromId(id) {
+  // enkel hash -> hue
+  let h = 0;
+  for (let i = 0; i < String(id).length; i++) h = (h * 31 + String(id).charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return {
+    fill: `hsla(${hue}, 70%, 50%, 0.20)`,
+    stroke: `hsla(${hue}, 70%, 65%, 0.90)`
+  };
+}
+
 
 // init
 updateMaterialInfo();
