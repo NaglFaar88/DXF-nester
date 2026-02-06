@@ -131,6 +131,20 @@ input[type="number"] { width: 100%; margin-top: 5px; }
   color: #fff;
   background: rgba(0,0,0,0.6);
   padding: 6px 10px;
+
+  #sidebar button {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #bbb;
+  background: #fff;
+  cursor: pointer;
+}
+#sidebar button:hover { background: #eee; }
+
+#nestNav button {
+  width: 44px;
+}
+
   border-radius: 6px;
   font-size: 12px;
 }
