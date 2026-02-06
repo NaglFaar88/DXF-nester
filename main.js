@@ -1,15 +1,22 @@
-/* main.js — M2 + QoL + M3.1 (BÄTTRE NESTNING: MaxRects + multi-try)
-   - Ladda flera DXF
-   - Sidebar preview + qty + synlig + ta bort
-   - Materialval + custom
-   - Mätläge: ΔX/ΔY/L/θ
-   - Soft snap med Shift + preview-ring + tydlig snäppzon
-   - M3.1: MaxRects (free-rectangles) + testar flera sorteringar + flera heuristics,
-           väljer bästa (minst antal ark, bäst utnyttjande).
-   - Rotation: 0°/90° (valbar)
-   - Gap (mm): används som “halv-gap” runt varje del i ritningen (symmetrisk spacing)
+/* main.js — M2 + QoL + M3.1
+   - DXF load (via ESM import från CDN)
+   - Previews i sidebar
+   - Mätläge (ΔX/ΔY/L/θ)
+   - Mjukt snäpp med Shift + preview-ring + snäppzon
+   - M3.1: MaxRects (free-rectangles) + multi-try (flera sorteringar + heuristics)
+   - Rotation 0/90 (valbar)
+   - Gap (mm)
 */
 
+import * as DxfMod from "https://cdn.jsdelivr.net/npm/@alecmev/dxf-parser@1.1.3/esm/index.js";
+
+const DxfParserCtor = DxfMod.DxfParser || DxfMod.default || DxfMod.Parser || DxfMod;
+if (!DxfParserCtor) {
+  alert("DXF-parser kunde inte laddas. Kör via en lokal server (inte file://).");
+  console.error("DXF module exports:", DxfMod);
+}
+
+// ----- DOM -----
 const fileInput = document.getElementById('fileInput');
 const fileListEl = document.getElementById('fileList');
 
@@ -30,7 +37,6 @@ const measureReadout = document.getElementById('measureReadout');
 const snapEnabledEl = document.getElementById('snapEnabled');
 const snapTolEl = document.getElementById('snapTol');
 
-// M3 UI (måste finnas i index.html)
 const gapMmEl = document.getElementById('gapMm');
 const allowRotateEl = document.getElementById('allowRotate');
 const nestBtn = document.getElementById('nestBtn');
@@ -41,26 +47,23 @@ const nextSheetBtn = document.getElementById('nextSheetBtn');
 const sheetInfoEl = document.getElementById('sheetInfo');
 const nestStatsEl = document.getElementById('nestStats');
 
-// State
+// ----- State -----
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
-// View transform for mapping screen <-> mm on material
 let view = { scale: 1, ox: 20, oy: 20, matWpx: 0, matHpx: 0 };
 
-// Measure state
 let measureOn = false;
-let measureP1 = null; // {xMm,yMm}
+let measureP1 = null;
 let measureP2 = null;
-let hoverSnap = null; // {xMm, yMm, note}
+let hoverSnap = null;
 let shiftDown = false;
 
-// Nest state
-let nestSheets = null; // [{ placements: [...], usedArea: number }]
+let nestSheets = null;
 let currentSheet = 0;
-let lastNestMeta = null; // {sheetCount,totalUsed,totalUtil,bestLabel,gap,allowRot,itemsCount,placedCount}
+let lastNestMeta = null;
 
-// ---------------- Canvas sizing ----------------
+// ----- Canvas sizing -----
 function resizeCanvas() {
   canvas.width = canvas.clientWidth;
   canvas.height = canvas.clientHeight;
@@ -69,7 +72,7 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// ---------------- Material ----------------
+// ----- Material -----
 function updateMaterialFromUI() {
   if (materialSelect.value === 'custom') {
     customMaterial.style.display = 'block';
@@ -82,7 +85,7 @@ function updateMaterialFromUI() {
   }
   updateMaterialInfo();
 
-  // Nestning blir stale när material ändras
+  // invalidate nest
   nestSheets = null;
   currentSheet = 0;
   lastNestMeta = null;
@@ -98,16 +101,17 @@ function updateMaterialInfo() {
   materialInfo.textContent = `Material: ${material.w} × ${material.h} mm`;
 }
 
-// ---------------- DXF Load ----------------
+// ----- DXF load -----
 fileInput.addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
   for (const file of files) {
     const text = await file.text();
-    const parser = new window.DxfParser();
-    let dxf;
+    const parser = new DxfParserCtor();
 
+    let dxf;
     try {
-      dxf = parser.parseSync(text);
+      // olika versioner använder parseSync/parse; vi stödjer båda
+      dxf = parser.parseSync ? parser.parseSync(text) : parser.parse(text);
     } catch (err) {
       console.error('DXF parse error:', file.name, err);
       alert(`Kunde inte läsa DXF: ${file.name}`);
@@ -115,7 +119,6 @@ fileInput.addEventListener('change', async (e) => {
     }
 
     const bounds = getBounds(dxf);
-
     parts.push({
       id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
       name: file.name,
@@ -155,67 +158,56 @@ function renderFileList() {
           <input type="number" min="1" value="${p.qty}" data-id="${p.id}" class="qty-input" />
         </label>
 
-        <label>
+        <label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" ${p.visible ? 'checked' : ''} data-id="${p.id}" class="vis-input" />
           Visa
         </label>
 
-        <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
+        <div style="margin-top:6px;font-size:12px;color:var(--muted);">
+          Mått: ${boundsToText(p.bounds)}
+        </div>
       </div>
     `;
 
     fileListEl.appendChild(div);
   });
 
-  // bind qty
+  // qty
   fileListEl.querySelectorAll('.qty-input').forEach(input => {
     input.addEventListener('input', (e) => {
       const id = e.target.dataset.id;
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.qty = Math.max(1, Number(e.target.value || 1));
-
-      nestSheets = null;
-      currentSheet = 0;
-      lastNestMeta = null;
-      if (nestNav) nestNav.style.display = 'none';
+      invalidateNest();
       draw();
     });
   });
 
-  // bind visible
+  // visible
   fileListEl.querySelectorAll('.vis-input').forEach(input => {
     input.addEventListener('change', (e) => {
       const id = e.target.dataset.id;
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.visible = e.target.checked;
-
-      nestSheets = null;
-      currentSheet = 0;
-      lastNestMeta = null;
-      if (nestNav) nestNav.style.display = 'none';
+      invalidateNest();
       draw();
     });
   });
 
-  // bind remove
+  // remove
   fileListEl.querySelectorAll('.file-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.id;
       parts = parts.filter(x => x.id !== id);
-
-      nestSheets = null;
-      currentSheet = 0;
-      lastNestMeta = null;
-      if (nestNav) nestNav.style.display = 'none';
-
+      invalidateNest();
       renderFileList();
       draw();
     });
   });
 
-  // draw thumbnails
+  // thumbnails
   fileListEl.querySelectorAll('canvas[data-id]').forEach(c => {
     const id = c.dataset.id;
     const p = parts.find(x => x.id === id);
@@ -224,11 +216,18 @@ function renderFileList() {
   });
 
   overlay.textContent = parts.length
-    ? 'M3.1: MaxRects nestning (bättre) + mätning + snäpp.'
+    ? 'Redo: Mät + snäpp + nestning (M3.1).'
     : 'Ladda DXF-filer för att börja';
 }
 
-// ---------------- Measure ----------------
+function invalidateNest() {
+  nestSheets = null;
+  currentSheet = 0;
+  lastNestMeta = null;
+  if (nestNav) nestNav.style.display = 'none';
+}
+
+// ----- Measure -----
 measureBtn.addEventListener('click', () => {
   measureOn = !measureOn;
   if (!measureOn) {
@@ -245,7 +244,6 @@ function updateMeasureUI() {
   measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
 }
 
-// Track Shift so draw() can show snap zone reliably
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Shift') {
     shiftDown = true;
@@ -269,7 +267,7 @@ canvas.addEventListener('click', (ev) => {
   const sy = ev.clientY - rect.top;
 
   let mm = screenToMm(sx, sy);
-  if (!mm) return; // click outside material
+  if (!mm) return;
 
   const snapped = applySnap(mm, ev.shiftKey);
   mm = snapped.pt;
@@ -277,7 +275,9 @@ canvas.addEventListener('click', (ev) => {
   if (!measureP1 || (measureP1 && measureP2)) {
     measureP1 = mm;
     measureP2 = null;
-    measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
+    measureReadout.textContent = snapped.note
+      ? `Snäpp: ${snapped.note}. Välj punkt 2...`
+      : 'Välj punkt 2...';
   } else {
     measureP2 = mm;
 
@@ -285,7 +285,6 @@ canvas.addEventListener('click', (ev) => {
     const dy = measureP2.yMm - measureP1.yMm;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    // 0° = höger, 90° = ned (pga skärmkoordinater)
     let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
     if (angleDeg < 0) angleDeg += 360;
 
@@ -315,13 +314,8 @@ canvas.addEventListener('mousemove', (ev) => {
   }
 
   const snapped = applySnap(mm, ev.shiftKey);
-
-  // Preview only when Shift and near edge/corner snap
-  if (ev.shiftKey && snapped.note) {
-    hoverSnap = { ...snapped.pt, note: snapped.note };
-  } else {
-    hoverSnap = null;
-  }
+  if (ev.shiftKey && snapped.note) hoverSnap = { ...snapped.pt, note: snapped.note };
+  else hoverSnap = null;
 
   draw();
 });
@@ -329,7 +323,6 @@ canvas.addEventListener('mousemove', (ev) => {
 function screenToMm(sx, sy) {
   const x = (sx - view.ox) / view.scale;
   const y = (sy - view.oy) / view.scale;
-
   if (x < 0 || y < 0 || x > material.w || y > material.h) return null;
   return { xMm: x, yMm: y };
 }
@@ -340,9 +333,7 @@ function mmToScreen(xMm, yMm) {
 
 function applySnap(mmPt, shiftKey) {
   if (!shiftKey) return { pt: mmPt, note: '' };
-
-  const enabled = !!snapEnabledEl?.checked;
-  if (!enabled) return { pt: mmPt, note: '' };
+  if (!snapEnabledEl?.checked) return { pt: mmPt, note: '' };
 
   const tol = Math.max(0, Number(snapTolEl?.value ?? 0));
   if (tol <= 0) return { pt: mmPt, note: '' };
@@ -370,7 +361,7 @@ function applySnap(mmPt, shiftKey) {
   return { pt: { xMm, yMm }, note };
 }
 
-// ---------------- Nesting (M3.1 MaxRects + multi-try) ----------------
+// ----- Nest (M3.1 MaxRects multi-try) -----
 nestBtn.addEventListener('click', () => runNestingMultiTry());
 
 prevSheetBtn?.addEventListener('click', () => {
@@ -393,7 +384,6 @@ function runNestingMultiTry() {
 
   const matW = Number(material.w || 0);
   const matH = Number(material.h || 0);
-
   if (matW <= 0 || matH <= 0) {
     overlay.textContent = 'Välj ett giltigt material först.';
     return;
@@ -402,22 +392,17 @@ function runNestingMultiTry() {
   const items = buildItemsFromParts();
   if (!items.length) {
     overlay.textContent = 'Inget att nesta (kontrollera synlighet/antal).';
-    nestSheets = null;
-    currentSheet = 0;
-    lastNestMeta = null;
-    nestNav.style.display = 'none';
+    invalidateNest();
     draw();
     return;
   }
 
-  // säkerhetsgräns (undvik att webbläsaren dör om man råkar skriva 9999)
   const MAX_ITEMS = 800;
   if (items.length > MAX_ITEMS) {
-    alert(`För många delar (${items.length}). Sänk antal eller filer. Max ${MAX_ITEMS} i nuläget.`);
+    alert(`För många delar (${items.length}). Sänk antal. Max ${MAX_ITEMS} just nu.`);
     return;
   }
 
-  // heuristics + sorteringsstrategier
   const heuristics = [
     { key: 'BSSF', name: 'Best Short Side Fit' },
     { key: 'BAF',  name: 'Best Area Fit' },
@@ -425,12 +410,11 @@ function runNestingMultiTry() {
   ];
 
   const sorters = [
-    { key: 'AREA', name: 'Area desc', fn: (a, b) => (b.area - a.area) || (b.maxSide - a.maxSide) },
-    { key: 'MAX',  name: 'Max-side desc', fn: (a, b) => (b.maxSide - a.maxSide) || (b.area - a.area) },
-    { key: 'AR',   name: 'Aspect (lång-smal) desc', fn: (a, b) => (b.aspect - a.aspect) || (b.area - a.area) }
+    { key: 'AREA', name: 'Area desc', fn: (a,b) => (b.area-a.area) || (b.maxSide-a.maxSide) },
+    { key: 'MAX',  name: 'Max-side desc', fn: (a,b) => (b.maxSide-a.maxSide) || (b.area-a.area) },
+    { key: 'AR',   name: 'Aspect desc', fn: (a,b) => (b.aspect-a.aspect) || (b.area-a.area) }
   ];
 
-  // Gör en "normaliserad" item representation för snabbare kopiering
   const baseItems = items.map((it, i) => ({
     idx: i,
     partId: it.partId,
@@ -446,24 +430,17 @@ function runNestingMultiTry() {
 
   for (const s of sorters) {
     const sorted = [...baseItems].sort(s.fn);
-
     for (const h of heuristics) {
       const res = packAllSheets_MaxRects(sorted, matW, matH, gap, allowRot, h.key);
 
-      // Om någon del inte får plats ens på tomt ark => abort direkt med tydlig info
       if (res.hardFailItem) {
-        const it = res.hardFailItem;
-        overlay.textContent = `Del "${it.name}" (${Math.round(it.w)}×${Math.round(it.h)} mm) får inte plats på materialet.`;
-        nestSheets = null;
-        currentSheet = 0;
-        lastNestMeta = null;
-        nestNav.style.display = 'none';
+        overlay.textContent = `Del "${res.hardFailItem.name}" (${Math.round(res.hardFailItem.w)}×${Math.round(res.hardFailItem.h)} mm) får inte plats på materialet.`;
+        invalidateNest();
         draw();
         return;
       }
 
       const score = scoreResult(res, matW, matH);
-
       if (!best || isBetterScore(score, best.score)) {
         best = {
           score,
@@ -484,7 +461,7 @@ function runNestingMultiTry() {
   }
 
   if (!best) {
-    overlay.textContent = 'Kunde inte skapa en nestning (okänt fel).';
+    overlay.textContent = 'Kunde inte skapa nestning (okänt fel).';
     return;
   }
 
@@ -492,7 +469,7 @@ function runNestingMultiTry() {
   currentSheet = 0;
   lastNestMeta = best.meta;
   nestNav.style.display = 'block';
-  overlay.textContent = `M3.1: Nestning klar (${best.meta.bestLabel}) — Ark: ${best.meta.sheetCount}`;
+  overlay.textContent = `Nestning klar (${best.meta.bestLabel}) — Ark: ${best.meta.sheetCount}`;
   updateNestUI();
   draw();
 }
@@ -504,17 +481,9 @@ function buildItemsFromParts() {
     const b = p.bounds;
     if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) continue;
 
-    const w = b.w;
-    const h = b.h;
     const qty = Math.max(1, Number(p.qty || 1));
-
     for (let i = 0; i < qty; i++) {
-      items.push({
-        partId: p.id,
-        name: p.name,
-        w,
-        h
-      });
+      items.push({ partId: p.id, name: p.name, w: b.w, h: b.h });
     }
   }
   return items;
@@ -524,13 +493,10 @@ function scoreResult(res, matW, matH) {
   const sheetCount = Math.max(1, res.sheets.length);
   const totalArea = sheetCount * (matW * matH);
   const totalUtil = totalArea > 0 ? (res.totalUsedArea / totalArea) : 0;
-
-  // Vi vill: färre ark först, sedan högre totalUtil
   return {
     sheetCount,
     totalUtil,
-    // tie-break: högre util på första arket
-    firstUtil: (matW * matH) > 0 ? (res.sheets[0].usedArea / (matW * matH)) : 0
+    firstUtil: (matW*matH) > 0 ? (res.sheets[0].usedArea / (matW*matH)) : 0
   };
 }
 
@@ -540,9 +506,9 @@ function isBetterScore(a, b) {
   return a.firstUtil > b.firstUtil;
 }
 
-/* ---------------- MaxRects Packing ----------------
-   - Vi packar PADDADE rektanglar: pw = w + gap, ph = h + gap
-   - När vi ritar: vi ritar den “riktiga” rektangeln inset med gap/2
+/* ---- MaxRects ----
+   Vi packar PADDADE rektanglar: pw=w+gap, ph=h+gap
+   Vid ritning ritar vi “riktig” rektangel inset med gap/2
 */
 function packAllSheets_MaxRects(itemsSorted, matW, matH, gap, allowRot, heuristicKey) {
   const remaining = [...itemsSorted];
@@ -550,13 +516,10 @@ function packAllSheets_MaxRects(itemsSorted, matW, matH, gap, allowRot, heuristi
   let totalUsedArea = 0;
   let placedCount = 0;
 
-  // snabb “hard fail”-koll: om en rektangel aldrig får plats
   for (const it of remaining) {
     const fits0 = (it.w + gap) <= matW && (it.h + gap) <= matH;
     const fitsR = allowRot && (it.h + gap) <= matW && (it.w + gap) <= matH;
-    if (!fits0 && !fitsR) {
-      return { sheets: [], totalUsedArea: 0, placedCount: 0, hardFailItem: it };
-    }
+    if (!fits0 && !fitsR) return { sheets: [], totalUsedArea: 0, placedCount: 0, hardFailItem: it };
   }
 
   while (remaining.length) {
@@ -565,10 +528,8 @@ function packAllSheets_MaxRects(itemsSorted, matW, matH, gap, allowRot, heuristi
     totalUsedArea += packed.sheet.usedArea;
     placedCount += packed.sheet.placements.length;
 
-    if (packed.unplaced.length === remaining.length) {
-      // borde inte hända pga hard-fail check, men safety:
-      break;
-    }
+    if (packed.unplaced.length === remaining.length) break;
+
     remaining.length = 0;
     remaining.push(...packed.unplaced);
   }
@@ -580,28 +541,21 @@ function packOneSheet_MaxRects(items, matW, matH, gap, allowRot, heuristicKey) {
   const free = [{ x: 0, y: 0, w: matW, h: matH }];
   const placements = [];
   let usedArea = 0;
-
   const unplaced = [];
 
   for (const it of items) {
-    const choice = findBestPlacement_MaxRects(it, free, matW, matH, gap, allowRot, heuristicKey);
-    if (!choice) {
-      unplaced.push(it);
-      continue;
-    }
+    const choice = findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey);
+    if (!choice) { unplaced.push(it); continue; }
 
-    // Lägg
     const placedRect = { x: choice.x, y: choice.y, w: choice.pw, h: choice.ph };
+
     placements.push({
       partId: it.partId,
       name: it.name,
-      // position för PAD (mm)
       x: choice.x,
       y: choice.y,
-      // “riktiga” dimensioner (mm)
       w: choice.w,
       h: choice.h,
-      // pad dimensioner (mm)
       pw: choice.pw,
       ph: choice.ph,
       rot: choice.rot,
@@ -610,7 +564,6 @@ function packOneSheet_MaxRects(items, matW, matH, gap, allowRot, heuristicKey) {
 
     usedArea += (choice.w * choice.h);
 
-    // Uppdatera free rects
     splitFreeRects(free, placedRect);
     pruneFreeRects(free);
   }
@@ -618,32 +571,31 @@ function packOneSheet_MaxRects(items, matW, matH, gap, allowRot, heuristicKey) {
   return { sheet: { placements, usedArea }, unplaced };
 }
 
-function findBestPlacement_MaxRects(it, free, matW, matH, gap, allowRot, heuristicKey) {
-  // Return {x,y,w,h,pw,ph,rot} eller null
+function findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey) {
   let best = null;
+  const opts = [{ w: it.w, h: it.h, rot: 0 }];
+  if (allowRot && it.w !== it.h) opts.push({ w: it.h, h: it.w, rot: 90 });
 
-  const candidates = [];
-  // 0°
-  candidates.push({ w: it.w, h: it.h, rot: 0 });
-  // 90°
-  if (allowRot && it.w !== it.h) candidates.push({ w: it.h, h: it.w, rot: 90 });
-
-  for (const o of candidates) {
+  for (const o of opts) {
     const pw = o.w + gap;
     const ph = o.h + gap;
 
     for (const fr of free) {
       if (pw <= fr.w && ph <= fr.h) {
-        const x = fr.x;
-        const y = fr.y;
-
-        const score = scorePlacement(fr, pw, ph, heuristicKey);
-        const cand = { x, y, w: o.w, h: o.h, pw, ph, rot: o.rot, score };
-        if (!best || isBetterPlacement(cand, best, heuristicKey)) best = cand;
+        const cand = {
+          x: fr.x,
+          y: fr.y,
+          w: o.w,
+          h: o.h,
+          pw,
+          ph,
+          rot: o.rot,
+          score: scorePlacement(fr, pw, ph, heuristicKey)
+        };
+        if (!best || isBetterPlacement(cand, best)) best = cand;
       }
     }
   }
-
   return best;
 }
 
@@ -654,87 +606,54 @@ function scorePlacement(freeRect, pw, ph, heuristicKey) {
   const longSide = Math.max(leftoverW, leftoverH);
   const areaFit = freeRect.w * freeRect.h - pw * ph;
 
-  if (heuristicKey === 'BSSF') {
-    // Primär: min shortSide, sekundär: min longSide
-    return { a: shortSide, b: longSide, c: areaFit, x: freeRect.x, y: freeRect.y };
-  }
-  if (heuristicKey === 'BAF') {
-    // Primär: min areaFit, sekundär: min shortSide
-    return { a: areaFit, b: shortSide, c: longSide, x: freeRect.x, y: freeRect.y };
-  }
-  // Bottom-left: min y, sedan min x, sedan min areaFit
-  return { a: freeRect.y, b: freeRect.x, c: areaFit, x: freeRect.x, y: freeRect.y };
+  if (heuristicKey === 'BSSF') return { a: shortSide, b: longSide, c: areaFit, x: freeRect.x, y: freeRect.y };
+  if (heuristicKey === 'BAF')  return { a: areaFit, b: shortSide, c: longSide, x: freeRect.x, y: freeRect.y };
+  return { a: freeRect.y, b: freeRect.x, c: areaFit, x: freeRect.x, y: freeRect.y }; // BL
 }
 
-function isBetterPlacement(a, b, heuristicKey) {
-  // jämför lexikografiskt på score a,b,c
+function isBetterPlacement(a, b) {
   if (a.score.a !== b.score.a) return a.score.a < b.score.a;
   if (a.score.b !== b.score.b) return a.score.b < b.score.b;
   if (a.score.c !== b.score.c) return a.score.c < b.score.c;
-  // tie-break: top-left-ish (stabilitet)
   if (a.y !== b.y) return a.y < b.y;
   return a.x < b.x;
 }
 
 function splitFreeRects(free, placed) {
-  // Klassisk MaxRects split: för varje free rect som intersectar placed -> dela upp i upp till 4
   for (let i = 0; i < free.length; i++) {
     const fr = free[i];
     if (!rectsIntersect(fr, placed)) continue;
 
     const newRects = [];
 
-    // ovan
     if (placed.y > fr.y) {
       newRects.push({ x: fr.x, y: fr.y, w: fr.w, h: placed.y - fr.y });
     }
-    // under
     if (placed.y + placed.h < fr.y + fr.h) {
-      newRects.push({
-        x: fr.x,
-        y: placed.y + placed.h,
-        w: fr.w,
-        h: (fr.y + fr.h) - (placed.y + placed.h)
-      });
+      newRects.push({ x: fr.x, y: placed.y + placed.h, w: fr.w, h: (fr.y + fr.h) - (placed.y + placed.h) });
     }
-    // vänster
     if (placed.x > fr.x) {
       newRects.push({ x: fr.x, y: fr.y, w: placed.x - fr.x, h: fr.h });
     }
-    // höger
     if (placed.x + placed.w < fr.x + fr.w) {
-      newRects.push({
-        x: placed.x + placed.w,
-        y: fr.y,
-        w: (fr.x + fr.w) - (placed.x + placed.w),
-        h: fr.h
-      });
+      newRects.push({ x: placed.x + placed.w, y: fr.y, w: (fr.x + fr.w) - (placed.x + placed.w), h: fr.h });
     }
 
-    // ersätt fr med sista och pop, och lägg in newRects
     free.splice(i, 1);
     i--;
 
     for (const nr of newRects) {
-      if (nr.w > 0.000001 && nr.h > 0.000001) free.push(nr);
+      if (nr.w > 1e-6 && nr.h > 1e-6) free.push(nr);
     }
   }
 }
 
 function pruneFreeRects(free) {
-  // ta bort rektanglar som är helt inuti en annan
   for (let i = 0; i < free.length; i++) {
     for (let j = i + 1; j < free.length; j++) {
       const a = free[i], b = free[j];
-      if (rectContainedIn(a, b)) {
-        free.splice(i, 1);
-        i--;
-        break;
-      }
-      if (rectContainedIn(b, a)) {
-        free.splice(j, 1);
-        j--;
-      }
+      if (rectContainedIn(a, b)) { free.splice(i, 1); i--; break; }
+      if (rectContainedIn(b, a)) { free.splice(j, 1); j--; }
     }
   }
 }
@@ -744,10 +663,7 @@ function rectsIntersect(a, b) {
 }
 
 function rectContainedIn(a, b) {
-  return a.x >= b.x &&
-         a.y >= b.y &&
-         a.x + a.w <= b.x + b.w &&
-         a.y + a.h <= b.y + b.h;
+  return a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 }
 
 function updateNestUI() {
@@ -765,14 +681,11 @@ function updateNestUI() {
   const pct = matArea > 0 ? (used / matArea) * 100 : 0;
 
   const meta = lastNestMeta;
-  const extra = meta
-    ? ` | Totalt: ${(meta.totalUtil * 100).toFixed(1)}% | ${meta.bestLabel}`
-    : '';
-
+  const extra = meta ? ` | Totalt: ${(meta.totalUtil * 100).toFixed(1)}% | ${meta.bestLabel}` : '';
   nestStatsEl.textContent = `Utnyttjande (ark): ${pct.toFixed(1)}% | Delar: ${nestSheets[currentSheet].placements.length}${extra}`;
 }
 
-// ---------------- Draw ----------------
+// ----- Draw -----
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -790,7 +703,7 @@ function draw() {
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
 
-  // Snap zone visibility: measureOn + Shift + snap enabled + tol > 0
+  // Snap zone (tydlig gul)
   if (measureOn && shiftDown && snapEnabledEl?.checked) {
     const tolMm = Math.max(0, Number(snapTolEl?.value ?? 0));
     if (tolMm > 0) {
@@ -805,7 +718,6 @@ function draw() {
       ctx.lineWidth = 2;
       ctx.setLineDash([8, 6]);
 
-      // left / right / top / bottom inner lines
       ctx.beginPath(); ctx.moveTo(ox + tolPx, oy); ctx.lineTo(ox + tolPx, oy + view.matHpx); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(ox + view.matWpx - tolPx, oy); ctx.lineTo(ox + view.matWpx - tolPx, oy + view.matHpx); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(ox, oy + tolPx); ctx.lineTo(ox + view.matWpx, oy + tolPx); ctx.stroke();
@@ -823,7 +735,7 @@ function draw() {
     }
   }
 
-  // Snap preview ring
+  // Snap ring
   if (hoverSnap) {
     const p = mmToScreen(hoverSnap.xMm, hoverSnap.yMm);
     ctx.strokeStyle = '#fff';
@@ -833,12 +745,11 @@ function draw() {
     ctx.stroke();
   }
 
-  // Nestning (M3.1)
+  // Nesting draw
   if (nestSheets && nestSheets.length) {
     const sheet = nestSheets[currentSheet] || nestSheets[0];
 
     for (const pl of sheet.placements) {
-      // Vi placerar PAD rektangel i algoritmen, men ritar “riktig” rektangel inset med gap/2
       const halfGap = (pl.gap || 0) * 0.5;
       const drawXmm = pl.x + halfGap;
       const drawYmm = pl.y + halfGap;
@@ -860,7 +771,6 @@ function draw() {
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
 
-      // label
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.font = '12px Arial';
       const label = pl.name.length > 18 ? pl.name.slice(0, 18) + '…' : pl.name;
@@ -869,7 +779,7 @@ function draw() {
     }
   }
 
-  // Measure points/line
+  // Measure draw
   if (measureP1) {
     const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
     drawCross(p1.sx, p1.sy);
@@ -899,12 +809,11 @@ function drawCross(x, y) {
   ctx.stroke();
 }
 
-// ---------------- Thumbnail ----------------
+// ----- Thumbnail -----
 function drawThumbnail(part, thumbCanvas) {
   const tctx = thumbCanvas.getContext('2d');
   const W = thumbCanvas.width;
   const H = thumbCanvas.height;
-
   tctx.clearRect(0, 0, W, H);
 
   const b = part.bounds;
@@ -927,11 +836,11 @@ function drawThumbnail(part, thumbCanvas) {
   const mapX = (x) => offsetX + (x - b.minX) * s;
   const mapY = (y) => offsetY + (b.maxY - y) * s;
 
-  tctx.strokeStyle = '#e6e6e6';
+  tctx.strokeStyle = 'rgba(255,255,255,0.25)';
   tctx.lineWidth = 1;
   tctx.strokeRect(pad, pad, innerW, innerH);
 
-  tctx.strokeStyle = '#111';
+  tctx.strokeStyle = '#e6e6e6';
   tctx.lineWidth = 1;
 
   const entities = part.dxf?.entities || [];
@@ -981,12 +890,11 @@ function drawThumbnail(part, thumbCanvas) {
         });
         tctx.stroke();
       }
-      continue;
     }
   }
 }
 
-// ---------------- Bounds helpers ----------------
+// ----- Bounds + helpers -----
 function boundsToText(b) {
   if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) return 'Okänt';
   return `${Math.round(b.w)} × ${Math.round(b.h)} mm`;
@@ -1046,7 +954,6 @@ function getBounds(dxf) {
         minX = Math.min(minX, x); minY = Math.min(minY, y);
         maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
       }
-      continue;
     }
   }
 
@@ -1079,7 +986,7 @@ function arcSampleAngles(a0, a1) {
   if (e < s) e += TWO_PI;
 
   const angles = [s, e];
-  const cardinals = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, TWO_PI];
+  const cardinals = [0, Math.PI/2, Math.PI, (3*Math.PI)/2, TWO_PI];
 
   for (const c of cardinals) {
     let cc = c;
