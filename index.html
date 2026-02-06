@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <title>DXF Nester (M2)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="styles.css" />
+  <!-- bumpa v= när du vill tvinga cache refresh -->
+  <link rel="stylesheet" href="styles.css?v=11" />
 </head>
 <body>
   <div id="app">
@@ -35,18 +36,21 @@
 
     <main id="viewer">
       <div id="toolbar">
-        <button id="measureBtn">Mät</button>
-        <span id="measureHint">Mätläge av</span>
+        <button id="measureBtn" type="button">Mät</button>
+        <span id="measureStatus">Mätläge av</span>
 
-        <label class="toolcheck">
+        <label id="snapWrap" title="Snäpp gäller endast när du håller Shift">
           <input type="checkbox" id="snapEnabled" checked />
           Snäpp (Shift)
         </label>
 
-        <input id="snapTol" type="number" min="0" value="5" step="1" />
-        <span class="unit">mm</span>
+        <label id="snapTolWrap" title="Snäpp-tolerans i mm (gäller bara med Shift)">
+          <span>±</span>
+          <input type="number" id="snapTol" min="0" step="1" value="5" />
+          <span>mm</span>
+        </label>
 
-        <span id="snapStatus">Snäppzon: AV</span>
+        <span id="measureReadout"></span>
       </div>
 
       <canvas id="canvas"></canvas>
@@ -55,6 +59,6 @@
   </div>
 
   <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
-  <script src="main.js"></script>
+  <script src="main.js?v=11"></script>
 </body>
 </html>
