@@ -1,432 +1,103 @@
-* { box-sizing: border-box; font-family: Arial, sans-serif; }
-body, html { margin: 0; height: 100%; }
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DXF Nester</title>
+  <link rel="stylesheet" href="styles.css?v=99">
+  <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.7/dist/dxf-parser.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="panel">
+        <h2 class="panel-title">DXF-filer</h2>
+        <input id="fileInput" type="file" accept=".dxf" multiple />
+        <div class="divider"></div>
 
-#app { display: flex; height: 100vh; }
+        <h3 class="panel-title">Material (mm)</h3>
+        <select id="materialSelect">
+          <option value="1000x1000">1000 × 1000</option>
+          <option value="1200x1200">1200 × 1200</option>
+          <option value="1500x1500">1500 × 1500</option>
+          <option value="1000x2000">1000 × 2000</option>
+          <option value="2000x1500">2000 × 1500</option>
+          <option value="2000x2000">2000 × 2000</option>
+          <option value="custom">Custom size</option>
+        </select>
 
-#sidebar {
-  width: 340px;
-  padding: 10px;
-  border-right: 1px solid #ccc;
-  background: #f7f7f7;
-  overflow-y: auto;
-}
+        <div id="customMaterial" style="display:none; margin-top:10px;">
+          <div class="row">
+            <div style="flex:1">
+              <label>Bredd (mm)</label>
+              <input id="customW" type="number" min="1" value="1000" />
+            </div>
+            <div style="flex:1">
+              <label>Höjd (mm)</label>
+              <input id="customH" type="number" min="1" value="1000" />
+            </div>
+          </div>
+        </div>
 
-#sidebar h2, #sidebar h3 { margin: 10px 0 6px; }
-#fileList { margin-top: 10px; }
+        <div id="materialInfo" class="hint"></div>
 
-#materialInfo {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #333;
-}
+        <div class="divider"></div>
 
-.file-item {
-  border: 1px solid #ccc;
-  padding: 8px;
-  margin-bottom: 8px;
-  background: #fff;
-}
+        <h3 class="panel-title">Nestning</h3>
+        <div class="row">
+          <div style="flex:1">
+            <label>Gap (mm)</label>
+            <input id="gapMm" type="number" min="0" value="5" />
+          </div>
+          <div style="flex:1; display:flex; align-items:flex-end;">
+            <label style="display:flex; align-items:center; gap:8px;">
+              <input id="allowRotate" type="checkbox" checked />
+              Tillåt rotation
+            </label>
+          </div>
+        </div>
+        <div style="margin-top:10px; display:flex; gap:10px;">
+          <button id="nestBtn" class="btn">Nesta</button>
+        </div>
 
-.file-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
+        <div id="nestNav" style="display:none; margin-top:10px;">
+          <div class="row">
+            <button id="prevSheetBtn" class="btn btn-secondary" style="width:54px;">◀</button>
+            <div id="sheetInfo" class="badge" style="flex:1; text-align:center;">Ark: 1/1</div>
+            <button id="nextSheetBtn" class="btn btn-secondary" style="width:54px;">▶</button>
+          </div>
+          <div id="nestStats" class="hint"></div>
+        </div>
 
-.file-title {
-  font-weight: bold;
-  font-size: 13px;
-  line-height: 1.2;
-  word-break: break-word;
-}
+        <div class="divider"></div>
 
-.file-remove {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border: 1px solid #bbb;
-  background: #fff;
-  border-radius: 4px;
-  cursor: pointer;
-  line-height: 18px;
-  text-align: center;
-  font-size: 14px;
-  padding: 0;
-}
-.file-remove:hover { background: #eee; }
+        <div id="fileList" class="file-list"></div>
+      </div>
+    </aside>
 
-.thumb-wide {
-  display: block;
-  width: 100%;
-  aspect-ratio: 12 / 7; /* matchar 240x140 */
-  height: auto;
-  margin: 6px 0 8px;
-  border: 1px solid #ddd;
-  background: #fafafa;
-  border-radius: 6px;
-}
+    <main class="main">
+      <div class="canvas-wrap" style="position:relative;">
+        <div id="overlay" class="badge" style="position:absolute; left:14px; top:14px; z-index:5;"></div>
 
-.file-item label {
-  display: block;
-  font-size: 12px;
-  margin-top: 6px;
-}
+        <div style="position:absolute; right:14px; top:14px; z-index:6; display:flex; gap:10px; align-items:center;">
+          <button id="measureBtn" class="btn">Mät</button>
+          <div id="measureStatus" class="badge">Mätläge av</div>
+          <label class="badge" style="display:flex; align-items:center; gap:8px;">
+            <input id="snapEnabled" type="checkbox" checked />
+            Snäpp (Shift)
+          </label>
+          <label class="badge" style="display:flex; align-items:center; gap:8px;">
+            ± <input id="snapTol" type="number" min="0" value="5" style="width:70px;">
+            mm
+          </label>
+          <div id="measureReadout" class="badge"></div>
+        </div>
 
-input[type="number"] { width: 100%; margin-top: 5px; }
+        <canvas id="canvas"></canvas>
+      </div>
+    </main>
+  </div>
 
-#viewer { position: relative; flex: 1; background: #111; }
-#canvas { width: 100%; height: 100%; display: block; }
-
-#toolbar {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  z-index: 10;
-}
-
-#measureBtn {
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid #444;
-  background: #f3f3f3;
-  cursor: pointer;
-}
-
-#measureStatus, #measureReadout {
-  color: #fff;
-  font-size: 12px;
-  background: rgba(0,0,0,0.55);
-  padding: 6px 10px;
-  border-radius: 6px;
-}
-
-#snapWrap, #snapTolWrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #fff;
-  font-size: 12px;
-  background: rgba(0,0,0,0.55);
-  padding: 6px 10px;
-  border-radius: 6px;
-}
-
-#snapTolWrap input {
-  width: 64px;
-  margin: 0;
-  padding: 2px 6px;
-  border-radius: 4px;
-  border: 1px solid #444;
-}
-
-#overlay {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  color: #fff;
-  background: rgba(0,0,0,0.6);
-  padding: 6px 10px;
-
-  #sidebar button {
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid #bbb;
-  background: #fff;
-  cursor: pointer;
-}
-#sidebar button:hover { background: #eee; }
-
-#nestNav button {
-  width: 44px;
-}
-
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-
-/* styles.css — layout + UI för DXF Nest Viewer */
-
-:root{
-  --bg:#0b0f14;
-  --panel:#121924;
-  --panel2:#0f1620;
-  --text:#e8eef6;
-  --muted:#9fb0c4;
-  --line:rgba(255,255,255,0.10);
-  --line2:rgba(255,255,255,0.16);
-  --accent:#2dd4bf;
-  --btn:#1f2a3a;
-  --btn2:#172131;
-  --danger:#ff6b6b;
-  --shadow: 0 10px 30px rgba(0,0,0,0.35);
-  --radius:14px;
-}
-
-*{ box-sizing:border-box; }
-html,body{ height:100%; }
-
-body{
-  margin:0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  background: radial-gradient(1200px 700px at 20% 0%, rgba(45,212,191,0.08), transparent 60%),
-              radial-gradient(900px 600px at 90% 15%, rgba(99,102,241,0.08), transparent 60%),
-              var(--bg);
-  color:var(--text);
-}
-
-.app{
-  height:100vh;
-  display:flex;
-  gap:14px;
-  padding:14px;
-}
-
-/* Sidebar */
-.sidebar{
-  width:360px;
-  min-width:320px;
-  max-width:420px;
-  overflow:auto;
-  padding-right:4px;
-}
-
-.panel{
-  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%),
-              var(--panel);
-  border:1px solid var(--line);
-  border-radius: var(--radius);
-  padding:12px;
-  margin-bottom:12px;
-  box-shadow: var(--shadow);
-}
-
-.panel-title{
-  font-size:14px;
-  font-weight:700;
-  letter-spacing:0.2px;
-  color:var(--text);
-  margin:0 0 10px 0;
-}
-
-.hint{
-  font-size:12px;
-  color:var(--muted);
-  margin-top:10px;
-  line-height:1.35;
-}
-
-.small{
-  font-size:12px;
-  color:var(--muted);
-  line-height:1.35;
-}
-
-.readout{
-  margin-top:10px;
-  font-size:12px;
-  color:var(--text);
-  padding:10px;
-  border-radius:12px;
-  border:1px solid var(--line);
-  background: rgba(0,0,0,0.25);
-  min-height:40px;
-  white-space:pre-wrap;
-}
-
-.divider{
-  height:1px;
-  background: var(--line);
-  margin:12px 0;
-}
-
-/* Inputs */
-input[type="file"]{
-  width:100%;
-  padding:10px;
-  border:1px dashed var(--line2);
-  border-radius:12px;
-  background: rgba(0,0,0,0.2);
-  color: var(--muted);
-}
-
-input[type="number"], select{
-  width:100%;
-  padding:10px;
-  border-radius:12px;
-  border:1px solid var(--line);
-  background: rgba(0,0,0,0.22);
-  color: var(--text);
-  outline:none;
-}
-
-select{
-  cursor:pointer;
-}
-
-label{
-  font-size:12px;
-  color: var(--muted);
-}
-
-label span{
-  color: var(--text);
-  font-size:12px;
-}
-
-.row{
-  display:flex;
-  gap:10px;
-}
-
-/* Buttons / badges */
-.btn{
-  appearance:none;
-  border:1px solid var(--line2);
-  background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent 65%),
-              var(--btn);
-  color: var(--text);
-  padding:10px 12px;
-  border-radius:12px;
-  cursor:pointer;
-  font-weight:700;
-  font-size:13px;
-  transition: transform 0.06s ease, border-color 0.15s ease, background 0.15s ease;
-}
-.btn:hover{ border-color: rgba(255,255,255,0.22); }
-.btn:active{ transform: translateY(1px); }
-
-.btn-secondary{
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 70%),
-              var(--btn2);
-}
-
-.badge{
-  font-size:12px;
-  padding:8px 10px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  background: rgba(0,0,0,0.25);
-  color: var(--muted);
-  white-space:nowrap;
-}
-
-/* File list cards */
-.file-list{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
-
-.file-item{
-  border:1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(0,0,0,0.22);
-  padding:10px;
-}
-
-.file-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:8px;
-}
-
-.file-title{
-  font-size:13px;
-  font-weight:800;
-  color: var(--text);
-  word-break: break-word;
-  line-height:1.2;
-}
-
-.file-remove{
-  flex:0 0 auto;
-  width:28px;
-  height:28px;
-  border-radius:10px;
-  border:1px solid rgba(255,255,255,0.16);
-  background: rgba(0,0,0,0.25);
-  color: var(--text);
-  cursor:pointer;
-  font-weight:900;
-  line-height:1;
-  transition: border-color 0.15s ease, transform 0.06s ease;
-}
-.file-remove:hover{
-  border-color: rgba(255,107,107,0.7);
-}
-.file-remove:active{
-  transform: translateY(1px);
-}
-
-.file-fields{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-  margin-top:8px;
-}
-
-/* Thumbnail canvas */
-.thumb-wide{
-  width:100%;
-  height:140px; /* matchar attributet i HTML, men detta styr visning */
-  display:block;
-  border-radius:12px;
-  border:1px solid var(--line);
-  background: rgba(255,255,255,0.06);
-}
-
-/* Main / Canvas */
-.main{
-  flex:1;
-  display:flex;
-  min-width: 0;
-}
-
-.canvas-wrap{
-  flex:1;
-  border-radius: var(--radius);
-  border:1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%),
-              var(--panel2);
-  box-shadow: var(--shadow);
-  padding:10px;
-  display:flex;
-  min-width:0;
-}
-
-#canvas{
-  width:100%;
-  height:100%;
-  border-radius: 12px;
-  background: rgba(0,0,0,0.28);
-  display:block;
-}
-
-/* Scrollbar (nice-to-have) */
-.sidebar::-webkit-scrollbar{ width:10px; }
-.sidebar::-webkit-scrollbar-track{ background: transparent; }
-.sidebar::-webkit-scrollbar-thumb{
-  background: rgba(255,255,255,0.12);
-  border-radius: 999px;
-  border:2px solid transparent;
-  background-clip: padding-box;
-}
-.sidebar::-webkit-scrollbar-thumb:hover{
-  background: rgba(255,255,255,0.18);
-  background-clip: padding-box;
-}
-
-/* Mobile-ish fallback */
-@media (max-width: 980px){
-  .app{ flex-direction:column; }
-  .sidebar{ width:auto; max-width:none; }
-  .main{ height:55vh; }
-}
+  <script src="main.js?v=99"></script>
+</body>
+</html>
