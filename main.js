@@ -1,81 +1,85 @@
-/* main.js — M2 + QoL + M3.1 (MaxRects multi-try) — UMD dxf-parser (window.DxfParser) */
+/* main.js — M2 + QoL + M3.1 (MaxRects + multi-try) */
 
-function $(id) {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`Saknar element #${id} i HTML`);
-  return el;
-}
+const fileInput = document.getElementById('fileInput');
+const fileListEl = document.getElementById('fileList');
 
-const fileInput = $('fileInput');
-const fileListEl = $('fileList');
-
-const canvas = $('canvas');
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-const materialSelect = $('materialSelect');
-const customMaterial = $('customMaterial');
-const customW = $('customW');
-const customH = $('customH');
-const materialInfo = $('materialInfo');
+const materialSelect = document.getElementById('materialSelect');
+const customMaterial = document.getElementById('customMaterial');
+const customW = document.getElementById('customW');
+const customH = document.getElementById('customH');
+const materialInfo = document.getElementById('materialInfo');
 
-const overlay = $('overlay');
-const measureBtn = $('measureBtn');
-const measureStatus = $('measureStatus');
-const measureReadout = $('measureReadout');
+const overlay = document.getElementById('overlay');
+const measureBtn = document.getElementById('measureBtn');
+const measureStatus = document.getElementById('measureStatus');
+const measureReadout = document.getElementById('measureReadout');
 
-const snapEnabledEl = $('snapEnabled');
-const snapTolEl = $('snapTol');
+const snapEnabledEl = document.getElementById('snapEnabled');
+const snapTolEl = document.getElementById('snapTol');
 
-const gapMmEl = $('gapMm');
-const allowRotateEl = $('allowRotate');
-const nestBtn = $('nestBtn');
+// M3 UI
+const gapMmEl = document.getElementById('gapMm');
+const allowRotateEl = document.getElementById('allowRotate');
+const nestBtn = document.getElementById('nestBtn');
 
-const nestNav = $('nestNav');
-const prevSheetBtn = $('prevSheetBtn');
-const nextSheetBtn = $('nextSheetBtn');
-const sheetInfoEl = $('sheetInfo');
-const nestStatsEl = $('nestStats');
+const nestNav = document.getElementById('nestNav');
+const prevSheetBtn = document.getElementById('prevSheetBtn');
+const nextSheetBtn = document.getElementById('nextSheetBtn');
+const sheetInfoEl = document.getElementById('sheetInfo');
+const nestStatsEl = document.getElementById('nestStats');
 
-// --------- Guard: dxf-parser ---------
-if (!window.DxfParser) {
-  overlay.textContent = 'FEL: dxf-parser saknas. Kontrollera script-taggen i index.html.';
-  overlay.style.borderColor = 'rgba(255,107,107,0.8)';
-  overlay.style.color = '#ffd5d5';
-  throw new Error('window.DxfParser saknas (dxf-parser script laddades inte).');
-}
-
-// --------- State ---------
+// State
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
+// View transform for mapping screen <-> mm on material
 let view = { scale: 1, ox: 20, oy: 20, matWpx: 0, matHpx: 0 };
 
+// Measure state
 let measureOn = false;
-let measureP1 = null;
+let measureP1 = null; // {xMm,yMm}
 let measureP2 = null;
-let hoverSnap = null;
+let hoverSnap = null; // {xMm, yMm, note}
 let shiftDown = false;
 
-let nestSheets = null;
+// Nest state
+let nestSheets = null; // [{ placements: [...], usedArea: number }]
 let currentSheet = 0;
 let lastNestMeta = null;
 
-// --------- Canvas sizing ---------
+// ---------------- Helpers: wait for DxfParser ----------------
+function waitForDxfParser(timeoutMs = 5000) {
+  const start = performance.now();
+  return new Promise((resolve, reject) => {
+    function tick() {
+      if (window.DxfParser) return resolve(true);
+      if (performance.now() - start > timeoutMs) return reject(new Error("DxfParser saknas"));
+      requestAnimationFrame(tick);
+    }
+    tick();
+  });
+}
+
+function setOverlayError(msg) {
+  overlay.textContent = msg;
+  overlay.style.borderColor = 'rgba(255,107,107,0.65)';
+  overlay.style.color = 'rgba(255,230,230,0.95)';
+  overlay.style.background = 'rgba(60,0,0,0.35)';
+}
+
+// ---------------- Canvas sizing ----------------
 function resizeCanvas() {
-  const w = canvas.clientWidth | 0;
-  const h = canvas.clientHeight | 0;
-  if (w <= 0 || h <= 0) return;
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
   draw();
 }
 window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
-// --------- Material ---------
-function updateMaterialInfo() {
-  materialInfo.textContent = `Material: ${material.w} × ${material.h} mm`;
-}
-
+// ---------------- Material ----------------
 function updateMaterialFromUI() {
   if (materialSelect.value === 'custom') {
     customMaterial.style.display = 'block';
@@ -87,16 +91,31 @@ function updateMaterialFromUI() {
     material = { w, h };
   }
   updateMaterialInfo();
-  clearNest();
+
+  nestSheets = null;
+  currentSheet = 0;
+  lastNestMeta = null;
+  if (nestNav) nestNav.style.display = 'none';
+
   draw();
 }
-
 materialSelect.addEventListener('change', updateMaterialFromUI);
 customW.addEventListener('input', updateMaterialFromUI);
 customH.addEventListener('input', updateMaterialFromUI);
 
-// --------- DXF load ---------
+function updateMaterialInfo() {
+  materialInfo.textContent = `Material: ${material.w} × ${material.h} mm`;
+}
+
+// ---------------- DXF Load ----------------
 fileInput.addEventListener('change', async (e) => {
+  try {
+    await waitForDxfParser(6000);
+  } catch {
+    setOverlayError('FEL: dxf-parser saknas. Kontrollera script-taggen i index.html (CDN).');
+    return;
+  }
+
   const files = Array.from(e.target.files || []);
   for (const file of files) {
     const text = await file.text();
@@ -112,6 +131,7 @@ fileInput.addEventListener('change', async (e) => {
     }
 
     const bounds = getBounds(dxf);
+
     parts.push({
       id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
       name: file.name,
@@ -122,17 +142,14 @@ fileInput.addEventListener('change', async (e) => {
     });
   }
 
-  clearNest();
-  renderFileList();
-  draw();
-});
-
-function clearNest() {
   nestSheets = null;
   currentSheet = 0;
   lastNestMeta = null;
-  nestNav.style.display = 'none';
-}
+  if (nestNav) nestNav.style.display = 'none';
+
+  renderFileList();
+  draw();
+});
 
 function renderFileList() {
   fileListEl.innerHTML = '';
@@ -140,6 +157,7 @@ function renderFileList() {
   parts.forEach((p) => {
     const div = document.createElement('div');
     div.className = 'file-item';
+
     div.innerHTML = `
       <div class="file-header">
         <div class="file-title">${escapeHtml(p.name)}</div>
@@ -158,11 +176,10 @@ function renderFileList() {
           Visa
         </label>
 
-        <div style="margin-top:6px;font-size:12px;color:rgba(232,238,246,0.85);">
-          Mått: ${boundsToText(p.bounds)}
-        </div>
+        <div style="margin-top:6px;font-size:12px;">Mått: ${boundsToText(p.bounds)}</div>
       </div>
     `;
+
     fileListEl.appendChild(div);
   });
 
@@ -172,7 +189,9 @@ function renderFileList() {
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.qty = Math.max(1, Number(e.target.value || 1));
-      clearNest();
+
+      nestSheets = null; currentSheet = 0; lastNestMeta = null;
+      if (nestNav) nestNav.style.display = 'none';
       draw();
     });
   });
@@ -183,7 +202,9 @@ function renderFileList() {
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.visible = e.target.checked;
-      clearNest();
+
+      nestSheets = null; currentSheet = 0; lastNestMeta = null;
+      if (nestNav) nestNav.style.display = 'none';
       draw();
     });
   });
@@ -192,7 +213,10 @@ function renderFileList() {
     btn.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.id;
       parts = parts.filter(x => x.id !== id);
-      clearNest();
+
+      nestSheets = null; currentSheet = 0; lastNestMeta = null;
+      if (nestNav) nestNav.style.display = 'none';
+
       renderFileList();
       draw();
     });
@@ -206,11 +230,12 @@ function renderFileList() {
   });
 
   overlay.textContent = parts.length
-    ? 'Klar för mätning + snäpp + nestning.'
+    ? 'M3.1: MaxRects nestning + mätning + snäpp (Shift).'
     : 'Ladda DXF-filer för att börja';
+  overlay.removeAttribute('style');
 }
 
-// --------- Measure + snap ---------
+// ---------------- Measure ----------------
 measureBtn.addEventListener('click', () => {
   measureOn = !measureOn;
   if (!measureOn) {
@@ -219,15 +244,27 @@ measureBtn.addEventListener('click', () => {
     hoverSnap = null;
     measureReadout.textContent = '';
   }
-  measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
+  updateMeasureUI();
   draw();
 });
 
+function updateMeasureUI() {
+  measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
+}
+
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Shift') { shiftDown = true; if (measureOn) draw(); }
+  if (e.key === 'Shift') {
+    shiftDown = true;
+    if (measureOn) draw();
+  }
 });
+
 window.addEventListener('keyup', (e) => {
-  if (e.key === 'Shift') { shiftDown = false; hoverSnap = null; if (measureOn) draw(); }
+  if (e.key === 'Shift') {
+    shiftDown = false;
+    hoverSnap = null;
+    if (measureOn) draw();
+  }
 });
 
 canvas.addEventListener('click', (ev) => {
@@ -249,15 +286,18 @@ canvas.addEventListener('click', (ev) => {
     measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
   } else {
     measureP2 = mm;
+
     const dx = measureP2.xMm - measureP1.xMm;
     const dy = measureP2.yMm - measureP1.yMm;
-    const dist = Math.sqrt(dx*dx + dy*dy);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
     let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
     if (angleDeg < 0) angleDeg += 360;
 
     const base = `ΔX: ${dx.toFixed(1)} mm, ΔY: ${dy.toFixed(1)} mm, L: ${dist.toFixed(1)} mm, θ: ${angleDeg.toFixed(1)}°`;
     measureReadout.textContent = snapped.note ? `${base} (snäpp: ${snapped.note})` : base;
   }
+
   draw();
 });
 
@@ -272,7 +312,10 @@ canvas.addEventListener('mousemove', (ev) => {
   if (!mm) { hoverSnap = null; draw(); return; }
 
   const snapped = applySnap(mm, ev.shiftKey);
-  hoverSnap = (ev.shiftKey && snapped.note) ? { ...snapped.pt, note: snapped.note } : null;
+
+  if (ev.shiftKey && snapped.note) hoverSnap = { ...snapped.pt, note: snapped.note };
+  else hoverSnap = null;
+
   draw();
 });
 
@@ -289,64 +332,74 @@ function mmToScreen(xMm, yMm) {
 
 function applySnap(mmPt, shiftKey) {
   if (!shiftKey) return { pt: mmPt, note: '' };
-  if (!snapEnabledEl.checked) return { pt: mmPt, note: '' };
 
-  const tol = Math.max(0, Number(snapTolEl.value ?? 0));
+  const enabled = !!snapEnabledEl?.checked;
+  if (!enabled) return { pt: mmPt, note: '' };
+
+  const tol = Math.max(0, Number(snapTolEl?.value ?? 0));
   if (tol <= 0) return { pt: mmPt, note: '' };
 
   let { xMm, yMm } = mmPt;
 
-  const nearLeft   = xMm <= tol;
-  const nearRight  = (material.w - xMm) <= tol;
-  const nearTop    = yMm <= tol;
+  const nearLeft = xMm <= tol;
+  const nearRight = (material.w - xMm) <= tol;
+  const nearTop = yMm <= tol;
   const nearBottom = (material.h - yMm) <= tol;
 
-  let snappedX=false, snappedY=false;
+  let snappedX = false, snappedY = false;
 
-  if (nearLeft) { xMm = 0; snappedX=true; }
-  else if (nearRight) { xMm = material.w; snappedX=true; }
+  if (nearLeft) { xMm = 0; snappedX = true; }
+  else if (nearRight) { xMm = material.w; snappedX = true; }
 
-  if (nearTop) { yMm = 0; snappedY=true; }
-  else if (nearBottom) { yMm = material.h; snappedY=true; }
+  if (nearTop) { yMm = 0; snappedY = true; }
+  else if (nearBottom) { yMm = material.h; snappedY = true; }
 
-  let note='';
-  if (snappedX && snappedY) note='hörn';
-  else if (snappedX) note = (xMm===0) ? 'vänsterkant' : 'högerkant';
-  else if (snappedY) note = (yMm===0) ? 'toppkant' : 'bottenkant';
+  let note = '';
+  if (snappedX && snappedY) note = 'hörn';
+  else if (snappedX) note = (xMm === 0) ? 'vänsterkant' : 'högerkant';
+  else if (snappedY) note = (yMm === 0) ? 'toppkant' : 'bottenkant';
 
-  return { pt:{xMm,yMm}, note };
+  return { pt: { xMm, yMm }, note };
 }
 
-// --------- Nest (M3.1) ---------
+// ---------------- Nesting (MaxRects + multi-try) ----------------
 nestBtn.addEventListener('click', () => runNestingMultiTry());
 
-prevSheetBtn.addEventListener('click', () => {
+prevSheetBtn?.addEventListener('click', () => {
   if (!nestSheets) return;
   currentSheet = Math.max(0, currentSheet - 1);
-  updateNestUI(); draw();
+  updateNestUI();
+  draw();
 });
-nextSheetBtn.addEventListener('click', () => {
+
+nextSheetBtn?.addEventListener('click', () => {
   if (!nestSheets) return;
   currentSheet = Math.min(nestSheets.length - 1, currentSheet + 1);
-  updateNestUI(); draw();
+  updateNestUI();
+  draw();
 });
 
 function runNestingMultiTry() {
-  const gap = Math.max(0, Number(gapMmEl.value ?? 0));
-  const allowRot = !!allowRotateEl.checked;
+  const gap = Math.max(0, Number(gapMmEl?.value ?? 0));
+  const allowRot = !!allowRotateEl?.checked;
 
   const matW = Number(material.w || 0);
   const matH = Number(material.h || 0);
 
+  if (matW <= 0 || matH <= 0) { overlay.textContent = 'Välj ett giltigt material först.'; return; }
+
   const items = buildItemsFromParts();
   if (!items.length) {
     overlay.textContent = 'Inget att nesta (kontrollera synlighet/antal).';
-    clearNest(); draw(); return;
+    nestSheets = null; currentSheet = 0; lastNestMeta = null;
+    nestNav.style.display = 'none';
+    draw();
+    return;
   }
 
   const MAX_ITEMS = 800;
   if (items.length > MAX_ITEMS) {
-    alert(`För många delar (${items.length}). Sänk antal. Max ${MAX_ITEMS}.`);
+    alert(`För många delar (${items.length}). Sänk antal eller filer. Max ${MAX_ITEMS} i nuläget.`);
     return;
   }
 
@@ -377,13 +430,17 @@ function runNestingMultiTry() {
 
   for (const s of sorters) {
     const sorted = [...baseItems].sort(s.fn);
+
     for (const h of heuristics) {
       const res = packAllSheets_MaxRects(sorted, matW, matH, gap, allowRot, h.key);
 
       if (res.hardFailItem) {
         const it = res.hardFailItem;
         overlay.textContent = `Del "${it.name}" (${Math.round(it.w)}×${Math.round(it.h)} mm) får inte plats på materialet.`;
-        clearNest(); draw(); return;
+        nestSheets = null; currentSheet = 0; lastNestMeta = null;
+        nestNav.style.display = 'none';
+        draw();
+        return;
       }
 
       const score = scoreResult(res, matW, matH);
@@ -406,11 +463,13 @@ function runNestingMultiTry() {
     }
   }
 
+  if (!best) { overlay.textContent = 'Kunde inte skapa en nestning (okänt fel).'; return; }
+
   nestSheets = best.sheets;
   currentSheet = 0;
   lastNestMeta = best.meta;
   nestNav.style.display = 'block';
-  overlay.textContent = `Nestning klar (${best.meta.bestLabel}) — Ark: ${best.meta.sheetCount}`;
+  overlay.textContent = `M3.1: Nestning klar (${best.meta.bestLabel}) — Ark: ${best.meta.sheetCount}`;
   updateNestUI();
   draw();
 }
@@ -422,8 +481,11 @@ function buildItemsFromParts() {
     const b = p.bounds;
     if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) continue;
 
+    const w = b.w;
+    const h = b.h;
     const qty = Math.max(1, Number(p.qty || 1));
-    for (let i = 0; i < qty; i++) items.push({ partId: p.id, name: p.name, w: b.w, h: b.h });
+
+    for (let i = 0; i < qty; i++) items.push({ partId: p.id, name: p.name, w, h });
   }
   return items;
 }
@@ -438,6 +500,7 @@ function scoreResult(res, matW, matH) {
     firstUtil: (matW * matH) > 0 ? (res.sheets[0].usedArea / (matW * matH)) : 0
   };
 }
+
 function isBetterScore(a, b) {
   if (a.sheetCount !== b.sheetCount) return a.sheetCount < b.sheetCount;
   if (a.totalUtil !== b.totalUtil) return a.totalUtil > b.totalUtil;
@@ -480,18 +543,21 @@ function packOneSheet_MaxRects(items, matW, matH, gap, allowRot, heuristicKey) {
     const choice = findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey);
     if (!choice) { unplaced.push(it); continue; }
 
+    const placedRect = { x: choice.x, y: choice.y, w: choice.pw, h: choice.ph };
+
     placements.push({
       partId: it.partId,
       name: it.name,
       x: choice.x, y: choice.y,
       w: choice.w, h: choice.h,
+      pw: choice.pw, ph: choice.ph,
       rot: choice.rot,
       gap
     });
 
     usedArea += (choice.w * choice.h);
 
-    splitFreeRects(free, { x: choice.x, y: choice.y, w: choice.pw, h: choice.ph });
+    splitFreeRects(free, placedRect);
     pruneFreeRects(free);
   }
 
@@ -500,21 +566,21 @@ function packOneSheet_MaxRects(items, matW, matH, gap, allowRot, heuristicKey) {
 
 function findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey) {
   let best = null;
-  const opts = [{ w: it.w, h: it.h, rot: 0 }];
-  if (allowRot && it.w !== it.h) opts.push({ w: it.h, h: it.w, rot: 90 });
 
-  for (const o of opts) {
+  const candidates = [{ w: it.w, h: it.h, rot: 0 }];
+  if (allowRot && it.w !== it.h) candidates.push({ w: it.h, h: it.w, rot: 90 });
+
+  for (const o of candidates) {
     const pw = o.w + gap;
     const ph = o.h + gap;
 
     for (const fr of free) {
       if (pw <= fr.w && ph <= fr.h) {
-        const cand = {
-          x: fr.x, y: fr.y,
-          w: o.w, h: o.h,
-          pw, ph, rot: o.rot,
-          score: scorePlacement(fr, pw, ph, heuristicKey)
-        };
+        const x = fr.x;
+        const y = fr.y;
+
+        const score = scorePlacement(fr, pw, ph, heuristicKey);
+        const cand = { x, y, w: o.w, h: o.h, pw, ph, rot: o.rot, score };
         if (!best || isBetterPlacement(cand, best)) best = cand;
       }
     }
@@ -522,17 +588,18 @@ function findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey) {
   return best;
 }
 
-function scorePlacement(fr, pw, ph, heuristicKey) {
-  const leftoverW = fr.w - pw;
-  const leftoverH = fr.h - ph;
+function scorePlacement(freeRect, pw, ph, heuristicKey) {
+  const leftoverW = freeRect.w - pw;
+  const leftoverH = freeRect.h - ph;
   const shortSide = Math.min(leftoverW, leftoverH);
   const longSide = Math.max(leftoverW, leftoverH);
-  const areaFit = fr.w * fr.h - pw * ph;
+  const areaFit = freeRect.w * freeRect.h - pw * ph;
 
-  if (heuristicKey === 'BSSF') return { a: shortSide, b: longSide, c: areaFit, x: fr.x, y: fr.y };
-  if (heuristicKey === 'BAF')  return { a: areaFit, b: shortSide, c: longSide, x: fr.x, y: fr.y };
-  return { a: fr.y, b: fr.x, c: areaFit, x: fr.x, y: fr.y }; // BL
+  if (heuristicKey === 'BSSF') return { a: shortSide, b: longSide, c: areaFit, x: freeRect.x, y: freeRect.y };
+  if (heuristicKey === 'BAF')  return { a: areaFit,  b: shortSide, c: longSide, x: freeRect.x, y: freeRect.y };
+  return { a: freeRect.y, b: freeRect.x, c: areaFit, x: freeRect.x, y: freeRect.y }; // BL
 }
+
 function isBetterPlacement(a, b) {
   if (a.score.a !== b.score.a) return a.score.a < b.score.a;
   if (a.score.b !== b.score.b) return a.score.b < b.score.b;
@@ -549,17 +616,18 @@ function splitFreeRects(free, placed) {
     const newRects = [];
 
     if (placed.y > fr.y) newRects.push({ x: fr.x, y: fr.y, w: fr.w, h: placed.y - fr.y });
-    if (placed.y + placed.h < fr.y + fr.h) newRects.push({
-      x: fr.x, y: placed.y + placed.h, w: fr.w, h: (fr.y + fr.h) - (placed.y + placed.h)
-    });
+    if (placed.y + placed.h < fr.y + fr.h) {
+      newRects.push({ x: fr.x, y: placed.y + placed.h, w: fr.w, h: (fr.y + fr.h) - (placed.y + placed.h) });
+    }
     if (placed.x > fr.x) newRects.push({ x: fr.x, y: fr.y, w: placed.x - fr.x, h: fr.h });
-    if (placed.x + placed.w < fr.x + fr.w) newRects.push({
-      x: placed.x + placed.w, y: fr.y, w: (fr.x + fr.w) - (placed.x + placed.w), h: fr.h
-    });
+    if (placed.x + placed.w < fr.x + fr.w) {
+      newRects.push({ x: placed.x + placed.w, y: fr.y, w: (fr.x + fr.w) - (placed.x + placed.w), h: fr.h });
+    }
 
     free.splice(i, 1);
     i--;
-    for (const r of newRects) if (r.w > 1e-6 && r.h > 1e-6) free.push(r);
+
+    for (const nr of newRects) if (nr.w > 1e-6 && nr.h > 1e-6) free.push(nr);
   }
 }
 
@@ -572,15 +640,18 @@ function pruneFreeRects(free) {
     }
   }
 }
+
 function rectsIntersect(a, b) {
   return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
 }
+
 function rectContainedIn(a, b) {
   return a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 }
 
 function updateNestUI() {
-  if (!nestSheets || !nestSheets.length) { nestNav.style.display = 'none'; return; }
+  if (!nestSheets || !nestSheets.length) { if (nestNav) nestNav.style.display = 'none'; return; }
+
   const total = nestSheets.length;
   const idx = currentSheet + 1;
   sheetInfoEl.textContent = `Ark: ${idx}/${total}`;
@@ -594,7 +665,7 @@ function updateNestUI() {
   nestStatsEl.textContent = `Utnyttjande (ark): ${pct.toFixed(1)}% | Delar: ${nestSheets[currentSheet].placements.length}${extra}`;
 }
 
-// --------- Draw ---------
+// ---------------- Draw ----------------
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -604,21 +675,22 @@ function draw() {
   const scale = Math.min(canvas.width / safeW, canvas.height / safeH) * 0.92;
   const ox = 20;
   const oy = 20;
+
   view = { scale, ox, oy, matWpx: safeW * scale, matHpx: safeH * scale };
 
-  // material
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
 
-  // snap zone lines when measuring + shift
-  if (measureOn && shiftDown && snapEnabledEl.checked) {
-    const tolMm = Math.max(0, Number(snapTolEl.value ?? 0));
+  if (measureOn && shiftDown && snapEnabledEl?.checked) {
+    const tolMm = Math.max(0, Number(snapTolEl?.value ?? 0));
     if (tolMm > 0) {
       const tolPx = Math.max(2, tolMm * view.scale);
 
       ctx.save();
-      ctx.beginPath(); ctx.rect(ox, oy, view.matWpx, view.matHpx); ctx.clip();
+      ctx.beginPath();
+      ctx.rect(ox, oy, view.matWpx, view.matHpx);
+      ctx.clip();
 
       ctx.strokeStyle = 'rgba(255, 220, 0, 0.9)';
       ctx.lineWidth = 2;
@@ -630,11 +702,17 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(ox, oy + view.matHpx - tolPx); ctx.lineTo(ox + view.matWpx, oy + view.matHpx - tolPx); ctx.stroke();
 
       ctx.setLineDash([]);
+
+      ctx.fillStyle = 'rgba(255, 220, 0, 0.05)';
+      ctx.fillRect(ox, oy, tolPx, view.matHpx);
+      ctx.fillRect(ox + view.matWpx - tolPx, oy, tolPx, view.matHpx);
+      ctx.fillRect(ox, oy, view.matWpx, tolPx);
+      ctx.fillRect(ox, oy + view.matHpx - tolPx, view.matWpx, tolPx);
+
       ctx.restore();
     }
   }
 
-  // snap ring
   if (hoverSnap) {
     const p = mmToScreen(hoverSnap.xMm, hoverSnap.yMm);
     ctx.strokeStyle = '#fff';
@@ -644,7 +722,6 @@ function draw() {
     ctx.stroke();
   }
 
-  // draw nesting rectangles
   if (nestSheets && nestSheets.length) {
     const sheet = nestSheets[currentSheet] || nestSheets[0];
 
@@ -656,13 +733,17 @@ function draw() {
       const p0 = mmToScreen(drawXmm, drawYmm);
       const p1 = mmToScreen(drawXmm + pl.w, drawYmm + pl.h);
 
-      const x = p0.sx, y = p0.sy;
-      const w = p1.sx - p0.sx, h = p1.sy - p0.sy;
+      const x = p0.sx;
+      const y = p0.sy;
+      const w = p1.sx - p0.sx;
+      const h = p1.sy - p0.sy;
 
       const col = colorFromId(pl.partId);
+
       ctx.fillStyle = col.fill;
       ctx.strokeStyle = col.stroke;
       ctx.lineWidth = 2;
+
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
 
@@ -674,13 +755,14 @@ function draw() {
     }
   }
 
-  // measure line
   if (measureP1) {
     const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
     drawCross(p1.sx, p1.sy);
+
     if (measureP2) {
       const p2 = mmToScreen(measureP2.xMm, measureP2.yMm);
       drawCross(p2.sx, p2.sy);
+
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -700,10 +782,12 @@ function drawCross(x, y) {
   ctx.stroke();
 }
 
-// --------- Thumbnail ---------
+// ---------------- Thumbnail ----------------
 function drawThumbnail(part, thumbCanvas) {
   const tctx = thumbCanvas.getContext('2d');
-  const W = thumbCanvas.width, H = thumbCanvas.height;
+  const W = thumbCanvas.width;
+  const H = thumbCanvas.height;
+
   tctx.clearRect(0, 0, W, H);
 
   const b = part.bounds;
@@ -718,7 +802,8 @@ function drawThumbnail(part, thumbCanvas) {
   const innerH = H - pad * 2;
 
   const s = Math.min(innerW / b.w, innerH / b.h);
-  const drawW = b.w * s, drawH = b.h * s;
+  const drawW = b.w * s;
+  const drawH = b.h * s;
   const offsetX = pad + (innerW - drawW) / 2;
   const offsetY = pad + (innerH - drawH) / 2;
 
@@ -737,12 +822,15 @@ function drawThumbnail(part, thumbCanvas) {
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       tctx.beginPath();
       ent.vertices.forEach((v, i) => {
-        const x = mapX(v.x), y = mapY(v.y);
-        if (i === 0) tctx.moveTo(x, y); else tctx.lineTo(x, y);
+        const x = mapX(v.x);
+        const y = mapY(v.y);
+        if (i === 0) tctx.moveTo(x, y);
+        else tctx.lineTo(x, y);
       });
       tctx.stroke();
       continue;
     }
+
     if (ent.type === 'LINE' && ent.start && ent.end) {
       tctx.beginPath();
       tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
@@ -750,16 +838,38 @@ function drawThumbnail(part, thumbCanvas) {
       tctx.stroke();
       continue;
     }
+
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = mapX(ent.center.x);
+      const cy = mapY(ent.center.y);
+      const r = ent.radius * s;
       tctx.beginPath();
-      tctx.arc(mapX(ent.center.x), mapY(ent.center.y), ent.radius * s, 0, Math.PI * 2);
+      tctx.arc(cx, cy, r, 0, Math.PI * 2);
       tctx.stroke();
+      continue;
+    }
+
+    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
+      const a0 = degToRad(ent.startAngle ?? 0);
+      const a1 = degToRad(ent.endAngle ?? 0);
+      const pts = arcPoints(cx, cy, r, a0, a1, 32);
+      if (pts.length) {
+        tctx.beginPath();
+        pts.forEach((pt, i) => {
+          const x = mapX(pt.x);
+          const y = mapY(pt.y);
+          if (i === 0) tctx.moveTo(x, y);
+          else tctx.lineTo(x, y);
+        });
+        tctx.stroke();
+      }
       continue;
     }
   }
 }
 
-// --------- Bounds helpers ---------
+// ---------------- Bounds helpers ----------------
 function boundsToText(b) {
   if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) return 'Okänt';
   return `${Math.round(b.w)} × ${Math.round(b.h)} mm`;
@@ -774,29 +884,58 @@ function getBounds(dxf) {
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       for (const v of ent.vertices) {
         if (isFinitePoint(v)) {
-          minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
-          maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
+          minX = Math.min(minX, v.x);
+          minY = Math.min(minY, v.y);
+          maxX = Math.max(maxX, v.x);
+          maxY = Math.max(maxY, v.y);
         }
       }
       continue;
     }
+
     if (ent.type === 'LINE' && ent.start && ent.end) {
-      if (isFinitePoint(ent.start)) { minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y); maxX = Math.max(maxX, ent.start.x); maxY = Math.max(maxY, ent.start.y); }
-      if (isFinitePoint(ent.end))   { minX = Math.min(minX, ent.end.x);   minY = Math.min(minY, ent.end.y);   maxX = Math.max(maxX, ent.end.x);   maxY = Math.max(maxY, ent.end.y); }
+      if (isFinitePoint(ent.start)) {
+        minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y);
+        maxX = Math.max(maxX, ent.start.x); maxY = Math.max(maxY, ent.start.y);
+      }
+      if (isFinitePoint(ent.end)) {
+        minX = Math.min(minX, ent.end.x); minY = Math.min(minY, ent.end.y);
+        maxX = Math.max(maxX, ent.end.x); maxY = Math.max(maxY, ent.end.y);
+      }
       continue;
     }
+
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       if (Number.isFinite(cx) && Number.isFinite(cy)) {
-        minX = Math.min(minX, cx - r); minY = Math.min(minY, cy - r);
-        maxX = Math.max(maxX, cx + r); maxY = Math.max(maxY, cy + r);
+        minX = Math.min(minX, cx - r);
+        minY = Math.min(minY, cy - r);
+        maxX = Math.max(maxX, cx + r);
+        maxY = Math.max(maxY, cy + r);
+      }
+      continue;
+    }
+
+    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
+      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
+      const a0 = degToRad(ent.startAngle ?? 0);
+      const a1 = degToRad(ent.endAngle ?? 0);
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+
+      const angles = arcSampleAngles(a0, a1);
+      for (const a of angles) {
+        const x = cx + r * Math.cos(a);
+        const y = cy + r * Math.sin(a);
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
       }
       continue;
     }
   }
 
   if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return invalidBounds();
-  const w = maxX - minX, h = maxY - minY;
+  const w = maxX - minX;
+  const h = maxY - minY;
   if (!Number.isFinite(w) || !Number.isFinite(h)) return invalidBounds();
   return { minX, minY, maxX, maxY, w, h };
 }
@@ -804,7 +943,48 @@ function getBounds(dxf) {
 function invalidBounds() {
   return { minX: NaN, minY: NaN, maxX: NaN, maxY: NaN, w: NaN, h: NaN };
 }
-function isFinitePoint(p) { return p && Number.isFinite(p.x) && Number.isFinite(p.y); }
+
+function isFinitePoint(p) {
+  return p && Number.isFinite(p.x) && Number.isFinite(p.y);
+}
+
+function degToRad(d) { return (d * Math.PI) / 180; }
+
+function arcSampleAngles(a0, a1) {
+  const TWO_PI = Math.PI * 2;
+  const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
+
+  let s = norm(a0);
+  let e = norm(a1);
+  if (e < s) e += TWO_PI;
+
+  const angles = [s, e];
+  const cardinals = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2, TWO_PI];
+
+  for (const c of cardinals) {
+    let cc = c;
+    if (cc < s) cc += TWO_PI;
+    if (cc >= s && cc <= e) angles.push(cc);
+  }
+  return angles;
+}
+
+function arcPoints(cx, cy, r, a0, a1, steps = 24) {
+  const TWO_PI = Math.PI * 2;
+  const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
+
+  let s = norm(a0);
+  let e = norm(a1);
+  if (e < s) e += TWO_PI;
+
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const a = s + (e - s) * t;
+    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+  }
+  return pts;
+}
 
 function escapeHtml(str) {
   return String(str)
@@ -825,9 +1005,8 @@ function colorFromId(id) {
   };
 }
 
-// --------- Init ---------
+// init
 updateMaterialInfo();
+updateMeasureUI();
 renderFileList();
-measureStatus.textContent = 'Mätläge av';
-overlay.textContent = 'Ladda DXF-filer för att börja';
-resizeCanvas();
+draw();
