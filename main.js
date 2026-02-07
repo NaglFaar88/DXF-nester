@@ -1,53 +1,50 @@
-/* main.js — M2 + QoL + M3.1
-   - DXF load (via ESM import från CDN)
-   - Previews i sidebar
-   - Mätläge (ΔX/ΔY/L/θ)
-   - Mjukt snäpp med Shift + preview-ring + snäppzon
-   - M3.1: MaxRects (free-rectangles) + multi-try (flera sorteringar + heuristics)
-   - Rotation 0/90 (valbar)
-   - Gap (mm)
-*/
+/* main.js — M2 + QoL + M3.1 (MaxRects multi-try) — UMD dxf-parser (window.DxfParser) */
 
-import * as DxfMod from "https://cdn.jsdelivr.net/npm/@alecmev/dxf-parser@1.1.3/esm/index.js";
-
-const DxfParserCtor = DxfMod.DxfParser || DxfMod.default || DxfMod.Parser || DxfMod;
-if (!DxfParserCtor) {
-  alert("DXF-parser kunde inte laddas. Kör via en lokal server (inte file://).");
-  console.error("DXF module exports:", DxfMod);
+function $(id) {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`Saknar element #${id} i HTML`);
+  return el;
 }
 
-// ----- DOM -----
-const fileInput = document.getElementById('fileInput');
-const fileListEl = document.getElementById('fileList');
+const fileInput = $('fileInput');
+const fileListEl = $('fileList');
 
-const canvas = document.getElementById('canvas');
+const canvas = $('canvas');
 const ctx = canvas.getContext('2d');
 
-const materialSelect = document.getElementById('materialSelect');
-const customMaterial = document.getElementById('customMaterial');
-const customW = document.getElementById('customW');
-const customH = document.getElementById('customH');
-const materialInfo = document.getElementById('materialInfo');
+const materialSelect = $('materialSelect');
+const customMaterial = $('customMaterial');
+const customW = $('customW');
+const customH = $('customH');
+const materialInfo = $('materialInfo');
 
-const overlay = document.getElementById('overlay');
-const measureBtn = document.getElementById('measureBtn');
-const measureStatus = document.getElementById('measureStatus');
-const measureReadout = document.getElementById('measureReadout');
+const overlay = $('overlay');
+const measureBtn = $('measureBtn');
+const measureStatus = $('measureStatus');
+const measureReadout = $('measureReadout');
 
-const snapEnabledEl = document.getElementById('snapEnabled');
-const snapTolEl = document.getElementById('snapTol');
+const snapEnabledEl = $('snapEnabled');
+const snapTolEl = $('snapTol');
 
-const gapMmEl = document.getElementById('gapMm');
-const allowRotateEl = document.getElementById('allowRotate');
-const nestBtn = document.getElementById('nestBtn');
+const gapMmEl = $('gapMm');
+const allowRotateEl = $('allowRotate');
+const nestBtn = $('nestBtn');
 
-const nestNav = document.getElementById('nestNav');
-const prevSheetBtn = document.getElementById('prevSheetBtn');
-const nextSheetBtn = document.getElementById('nextSheetBtn');
-const sheetInfoEl = document.getElementById('sheetInfo');
-const nestStatsEl = document.getElementById('nestStats');
+const nestNav = $('nestNav');
+const prevSheetBtn = $('prevSheetBtn');
+const nextSheetBtn = $('nextSheetBtn');
+const sheetInfoEl = $('sheetInfo');
+const nestStatsEl = $('nestStats');
 
-// ----- State -----
+// --------- Guard: dxf-parser ---------
+if (!window.DxfParser) {
+  overlay.textContent = 'FEL: dxf-parser saknas. Kontrollera script-taggen i index.html.';
+  overlay.style.borderColor = 'rgba(255,107,107,0.8)';
+  overlay.style.color = '#ffd5d5';
+  throw new Error('window.DxfParser saknas (dxf-parser script laddades inte).');
+}
+
+// --------- State ---------
 let parts = [];
 let material = { w: 1000, h: 1000 };
 
@@ -63,16 +60,22 @@ let nestSheets = null;
 let currentSheet = 0;
 let lastNestMeta = null;
 
-// ----- Canvas sizing -----
+// --------- Canvas sizing ---------
 function resizeCanvas() {
-  canvas.width = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
+  const w = canvas.clientWidth | 0;
+  const h = canvas.clientHeight | 0;
+  if (w <= 0 || h <= 0) return;
+  canvas.width = w;
+  canvas.height = h;
   draw();
 }
 window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
 
-// ----- Material -----
+// --------- Material ---------
+function updateMaterialInfo() {
+  materialInfo.textContent = `Material: ${material.w} × ${material.h} mm`;
+}
+
 function updateMaterialFromUI() {
   if (materialSelect.value === 'custom') {
     customMaterial.style.display = 'block';
@@ -84,34 +87,24 @@ function updateMaterialFromUI() {
     material = { w, h };
   }
   updateMaterialInfo();
-
-  // invalidate nest
-  nestSheets = null;
-  currentSheet = 0;
-  lastNestMeta = null;
-  if (nestNav) nestNav.style.display = 'none';
-
+  clearNest();
   draw();
 }
+
 materialSelect.addEventListener('change', updateMaterialFromUI);
 customW.addEventListener('input', updateMaterialFromUI);
 customH.addEventListener('input', updateMaterialFromUI);
 
-function updateMaterialInfo() {
-  materialInfo.textContent = `Material: ${material.w} × ${material.h} mm`;
-}
-
-// ----- DXF load -----
+// --------- DXF load ---------
 fileInput.addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
   for (const file of files) {
     const text = await file.text();
-    const parser = new DxfParserCtor();
-
+    const parser = new window.DxfParser();
     let dxf;
+
     try {
-      // olika versioner använder parseSync/parse; vi stödjer båda
-      dxf = parser.parseSync ? parser.parseSync(text) : parser.parse(text);
+      dxf = parser.parseSync(text);
     } catch (err) {
       console.error('DXF parse error:', file.name, err);
       alert(`Kunde inte läsa DXF: ${file.name}`);
@@ -129,14 +122,17 @@ fileInput.addEventListener('change', async (e) => {
     });
   }
 
-  nestSheets = null;
-  currentSheet = 0;
-  lastNestMeta = null;
-  if (nestNav) nestNav.style.display = 'none';
-
+  clearNest();
   renderFileList();
   draw();
 });
+
+function clearNest() {
+  nestSheets = null;
+  currentSheet = 0;
+  lastNestMeta = null;
+  nestNav.style.display = 'none';
+}
 
 function renderFileList() {
   fileListEl.innerHTML = '';
@@ -144,7 +140,6 @@ function renderFileList() {
   parts.forEach((p) => {
     const div = document.createElement('div');
     div.className = 'file-item';
-
     div.innerHTML = `
       <div class="file-header">
         <div class="file-title">${escapeHtml(p.name)}</div>
@@ -163,51 +158,46 @@ function renderFileList() {
           Visa
         </label>
 
-        <div style="margin-top:6px;font-size:12px;color:var(--muted);">
+        <div style="margin-top:6px;font-size:12px;color:rgba(232,238,246,0.85);">
           Mått: ${boundsToText(p.bounds)}
         </div>
       </div>
     `;
-
     fileListEl.appendChild(div);
   });
 
-  // qty
   fileListEl.querySelectorAll('.qty-input').forEach(input => {
     input.addEventListener('input', (e) => {
       const id = e.target.dataset.id;
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.qty = Math.max(1, Number(e.target.value || 1));
-      invalidateNest();
+      clearNest();
       draw();
     });
   });
 
-  // visible
   fileListEl.querySelectorAll('.vis-input').forEach(input => {
     input.addEventListener('change', (e) => {
       const id = e.target.dataset.id;
       const p = parts.find(x => x.id === id);
       if (!p) return;
       p.visible = e.target.checked;
-      invalidateNest();
+      clearNest();
       draw();
     });
   });
 
-  // remove
   fileListEl.querySelectorAll('.file-remove').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const id = e.currentTarget.dataset.id;
       parts = parts.filter(x => x.id !== id);
-      invalidateNest();
+      clearNest();
       renderFileList();
       draw();
     });
   });
 
-  // thumbnails
   fileListEl.querySelectorAll('canvas[data-id]').forEach(c => {
     const id = c.dataset.id;
     const p = parts.find(x => x.id === id);
@@ -216,18 +206,11 @@ function renderFileList() {
   });
 
   overlay.textContent = parts.length
-    ? 'Redo: Mät + snäpp + nestning (M3.1).'
+    ? 'Klar för mätning + snäpp + nestning.'
     : 'Ladda DXF-filer för att börja';
 }
 
-function invalidateNest() {
-  nestSheets = null;
-  currentSheet = 0;
-  lastNestMeta = null;
-  if (nestNav) nestNav.style.display = 'none';
-}
-
-// ----- Measure -----
+// --------- Measure + snap ---------
 measureBtn.addEventListener('click', () => {
   measureOn = !measureOn;
   if (!measureOn) {
@@ -236,27 +219,15 @@ measureBtn.addEventListener('click', () => {
     hoverSnap = null;
     measureReadout.textContent = '';
   }
-  updateMeasureUI();
+  measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
   draw();
 });
 
-function updateMeasureUI() {
-  measureStatus.textContent = measureOn ? 'Mätläge på' : 'Mätläge av';
-}
-
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Shift') {
-    shiftDown = true;
-    if (measureOn) draw();
-  }
+  if (e.key === 'Shift') { shiftDown = true; if (measureOn) draw(); }
 });
-
 window.addEventListener('keyup', (e) => {
-  if (e.key === 'Shift') {
-    shiftDown = false;
-    hoverSnap = null;
-    if (measureOn) draw();
-  }
+  if (e.key === 'Shift') { shiftDown = false; hoverSnap = null; if (measureOn) draw(); }
 });
 
 canvas.addEventListener('click', (ev) => {
@@ -275,48 +246,33 @@ canvas.addEventListener('click', (ev) => {
   if (!measureP1 || (measureP1 && measureP2)) {
     measureP1 = mm;
     measureP2 = null;
-    measureReadout.textContent = snapped.note
-      ? `Snäpp: ${snapped.note}. Välj punkt 2...`
-      : 'Välj punkt 2...';
+    measureReadout.textContent = snapped.note ? `Snäpp: ${snapped.note}. Välj punkt 2...` : 'Välj punkt 2...';
   } else {
     measureP2 = mm;
-
     const dx = measureP2.xMm - measureP1.xMm;
     const dy = measureP2.yMm - measureP1.yMm;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
+    const dist = Math.sqrt(dx*dx + dy*dy);
     let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
     if (angleDeg < 0) angleDeg += 360;
 
     const base = `ΔX: ${dx.toFixed(1)} mm, ΔY: ${dy.toFixed(1)} mm, L: ${dist.toFixed(1)} mm, θ: ${angleDeg.toFixed(1)}°`;
     measureReadout.textContent = snapped.note ? `${base} (snäpp: ${snapped.note})` : base;
   }
-
   draw();
 });
 
 canvas.addEventListener('mousemove', (ev) => {
-  if (!measureOn) {
-    hoverSnap = null;
-    draw();
-    return;
-  }
+  if (!measureOn) { hoverSnap = null; draw(); return; }
 
   const rect = canvas.getBoundingClientRect();
   const sx = ev.clientX - rect.left;
   const sy = ev.clientY - rect.top;
 
   const mm = screenToMm(sx, sy);
-  if (!mm) {
-    hoverSnap = null;
-    draw();
-    return;
-  }
+  if (!mm) { hoverSnap = null; draw(); return; }
 
   const snapped = applySnap(mm, ev.shiftKey);
-  if (ev.shiftKey && snapped.note) hoverSnap = { ...snapped.pt, note: snapped.note };
-  else hoverSnap = null;
-
+  hoverSnap = (ev.shiftKey && snapped.note) ? { ...snapped.pt, note: snapped.note } : null;
   draw();
 });
 
@@ -333,73 +289,64 @@ function mmToScreen(xMm, yMm) {
 
 function applySnap(mmPt, shiftKey) {
   if (!shiftKey) return { pt: mmPt, note: '' };
-  if (!snapEnabledEl?.checked) return { pt: mmPt, note: '' };
+  if (!snapEnabledEl.checked) return { pt: mmPt, note: '' };
 
-  const tol = Math.max(0, Number(snapTolEl?.value ?? 0));
+  const tol = Math.max(0, Number(snapTolEl.value ?? 0));
   if (tol <= 0) return { pt: mmPt, note: '' };
 
   let { xMm, yMm } = mmPt;
 
-  const nearLeft = xMm <= tol;
-  const nearRight = (material.w - xMm) <= tol;
-  const nearTop = yMm <= tol;
+  const nearLeft   = xMm <= tol;
+  const nearRight  = (material.w - xMm) <= tol;
+  const nearTop    = yMm <= tol;
   const nearBottom = (material.h - yMm) <= tol;
 
-  let snappedX = false, snappedY = false;
+  let snappedX=false, snappedY=false;
 
-  if (nearLeft) { xMm = 0; snappedX = true; }
-  else if (nearRight) { xMm = material.w; snappedX = true; }
+  if (nearLeft) { xMm = 0; snappedX=true; }
+  else if (nearRight) { xMm = material.w; snappedX=true; }
 
-  if (nearTop) { yMm = 0; snappedY = true; }
-  else if (nearBottom) { yMm = material.h; snappedY = true; }
+  if (nearTop) { yMm = 0; snappedY=true; }
+  else if (nearBottom) { yMm = material.h; snappedY=true; }
 
-  let note = '';
-  if (snappedX && snappedY) note = 'hörn';
-  else if (snappedX) note = (xMm === 0) ? 'vänsterkant' : 'högerkant';
-  else if (snappedY) note = (yMm === 0) ? 'toppkant' : 'bottenkant';
+  let note='';
+  if (snappedX && snappedY) note='hörn';
+  else if (snappedX) note = (xMm===0) ? 'vänsterkant' : 'högerkant';
+  else if (snappedY) note = (yMm===0) ? 'toppkant' : 'bottenkant';
 
-  return { pt: { xMm, yMm }, note };
+  return { pt:{xMm,yMm}, note };
 }
 
-// ----- Nest (M3.1 MaxRects multi-try) -----
+// --------- Nest (M3.1) ---------
 nestBtn.addEventListener('click', () => runNestingMultiTry());
 
-prevSheetBtn?.addEventListener('click', () => {
+prevSheetBtn.addEventListener('click', () => {
   if (!nestSheets) return;
   currentSheet = Math.max(0, currentSheet - 1);
-  updateNestUI();
-  draw();
+  updateNestUI(); draw();
 });
-
-nextSheetBtn?.addEventListener('click', () => {
+nextSheetBtn.addEventListener('click', () => {
   if (!nestSheets) return;
   currentSheet = Math.min(nestSheets.length - 1, currentSheet + 1);
-  updateNestUI();
-  draw();
+  updateNestUI(); draw();
 });
 
 function runNestingMultiTry() {
-  const gap = Math.max(0, Number(gapMmEl?.value ?? 0));
-  const allowRot = !!allowRotateEl?.checked;
+  const gap = Math.max(0, Number(gapMmEl.value ?? 0));
+  const allowRot = !!allowRotateEl.checked;
 
   const matW = Number(material.w || 0);
   const matH = Number(material.h || 0);
-  if (matW <= 0 || matH <= 0) {
-    overlay.textContent = 'Välj ett giltigt material först.';
-    return;
-  }
 
   const items = buildItemsFromParts();
   if (!items.length) {
     overlay.textContent = 'Inget att nesta (kontrollera synlighet/antal).';
-    invalidateNest();
-    draw();
-    return;
+    clearNest(); draw(); return;
   }
 
   const MAX_ITEMS = 800;
   if (items.length > MAX_ITEMS) {
-    alert(`För många delar (${items.length}). Sänk antal. Max ${MAX_ITEMS} just nu.`);
+    alert(`För många delar (${items.length}). Sänk antal. Max ${MAX_ITEMS}.`);
     return;
   }
 
@@ -410,9 +357,9 @@ function runNestingMultiTry() {
   ];
 
   const sorters = [
-    { key: 'AREA', name: 'Area desc', fn: (a,b) => (b.area-a.area) || (b.maxSide-a.maxSide) },
-    { key: 'MAX',  name: 'Max-side desc', fn: (a,b) => (b.maxSide-a.maxSide) || (b.area-a.area) },
-    { key: 'AR',   name: 'Aspect desc', fn: (a,b) => (b.aspect-a.aspect) || (b.area-a.area) }
+    { key: 'AREA', name: 'Area desc', fn: (a, b) => (b.area - a.area) || (b.maxSide - a.maxSide) },
+    { key: 'MAX',  name: 'Max-side desc', fn: (a, b) => (b.maxSide - a.maxSide) || (b.area - a.area) },
+    { key: 'AR',   name: 'Aspect desc', fn: (a, b) => (b.aspect - a.aspect) || (b.area - a.area) }
   ];
 
   const baseItems = items.map((it, i) => ({
@@ -434,10 +381,9 @@ function runNestingMultiTry() {
       const res = packAllSheets_MaxRects(sorted, matW, matH, gap, allowRot, h.key);
 
       if (res.hardFailItem) {
-        overlay.textContent = `Del "${res.hardFailItem.name}" (${Math.round(res.hardFailItem.w)}×${Math.round(res.hardFailItem.h)} mm) får inte plats på materialet.`;
-        invalidateNest();
-        draw();
-        return;
+        const it = res.hardFailItem;
+        overlay.textContent = `Del "${it.name}" (${Math.round(it.w)}×${Math.round(it.h)} mm) får inte plats på materialet.`;
+        clearNest(); draw(); return;
       }
 
       const score = scoreResult(res, matW, matH);
@@ -460,11 +406,6 @@ function runNestingMultiTry() {
     }
   }
 
-  if (!best) {
-    overlay.textContent = 'Kunde inte skapa nestning (okänt fel).';
-    return;
-  }
-
   nestSheets = best.sheets;
   currentSheet = 0;
   lastNestMeta = best.meta;
@@ -482,9 +423,7 @@ function buildItemsFromParts() {
     if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w <= 0 || b.h <= 0) continue;
 
     const qty = Math.max(1, Number(p.qty || 1));
-    for (let i = 0; i < qty; i++) {
-      items.push({ partId: p.id, name: p.name, w: b.w, h: b.h });
-    }
+    for (let i = 0; i < qty; i++) items.push({ partId: p.id, name: p.name, w: b.w, h: b.h });
   }
   return items;
 }
@@ -496,20 +435,15 @@ function scoreResult(res, matW, matH) {
   return {
     sheetCount,
     totalUtil,
-    firstUtil: (matW*matH) > 0 ? (res.sheets[0].usedArea / (matW*matH)) : 0
+    firstUtil: (matW * matH) > 0 ? (res.sheets[0].usedArea / (matW * matH)) : 0
   };
 }
-
 function isBetterScore(a, b) {
   if (a.sheetCount !== b.sheetCount) return a.sheetCount < b.sheetCount;
   if (a.totalUtil !== b.totalUtil) return a.totalUtil > b.totalUtil;
   return a.firstUtil > b.firstUtil;
 }
 
-/* ---- MaxRects ----
-   Vi packar PADDADE rektanglar: pw=w+gap, ph=h+gap
-   Vid ritning ritar vi “riktig” rektangel inset med gap/2
-*/
 function packAllSheets_MaxRects(itemsSorted, matW, matH, gap, allowRot, heuristicKey) {
   const remaining = [...itemsSorted];
   const sheets = [];
@@ -529,7 +463,6 @@ function packAllSheets_MaxRects(itemsSorted, matW, matH, gap, allowRot, heuristi
     placedCount += packed.sheet.placements.length;
 
     if (packed.unplaced.length === remaining.length) break;
-
     remaining.length = 0;
     remaining.push(...packed.unplaced);
   }
@@ -547,24 +480,18 @@ function packOneSheet_MaxRects(items, matW, matH, gap, allowRot, heuristicKey) {
     const choice = findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey);
     if (!choice) { unplaced.push(it); continue; }
 
-    const placedRect = { x: choice.x, y: choice.y, w: choice.pw, h: choice.ph };
-
     placements.push({
       partId: it.partId,
       name: it.name,
-      x: choice.x,
-      y: choice.y,
-      w: choice.w,
-      h: choice.h,
-      pw: choice.pw,
-      ph: choice.ph,
+      x: choice.x, y: choice.y,
+      w: choice.w, h: choice.h,
       rot: choice.rot,
       gap
     });
 
     usedArea += (choice.w * choice.h);
 
-    splitFreeRects(free, placedRect);
+    splitFreeRects(free, { x: choice.x, y: choice.y, w: choice.pw, h: choice.ph });
     pruneFreeRects(free);
   }
 
@@ -583,13 +510,9 @@ function findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey) {
     for (const fr of free) {
       if (pw <= fr.w && ph <= fr.h) {
         const cand = {
-          x: fr.x,
-          y: fr.y,
-          w: o.w,
-          h: o.h,
-          pw,
-          ph,
-          rot: o.rot,
+          x: fr.x, y: fr.y,
+          w: o.w, h: o.h,
+          pw, ph, rot: o.rot,
           score: scorePlacement(fr, pw, ph, heuristicKey)
         };
         if (!best || isBetterPlacement(cand, best)) best = cand;
@@ -599,18 +522,17 @@ function findBestPlacement_MaxRects(it, free, gap, allowRot, heuristicKey) {
   return best;
 }
 
-function scorePlacement(freeRect, pw, ph, heuristicKey) {
-  const leftoverW = freeRect.w - pw;
-  const leftoverH = freeRect.h - ph;
+function scorePlacement(fr, pw, ph, heuristicKey) {
+  const leftoverW = fr.w - pw;
+  const leftoverH = fr.h - ph;
   const shortSide = Math.min(leftoverW, leftoverH);
   const longSide = Math.max(leftoverW, leftoverH);
-  const areaFit = freeRect.w * freeRect.h - pw * ph;
+  const areaFit = fr.w * fr.h - pw * ph;
 
-  if (heuristicKey === 'BSSF') return { a: shortSide, b: longSide, c: areaFit, x: freeRect.x, y: freeRect.y };
-  if (heuristicKey === 'BAF')  return { a: areaFit, b: shortSide, c: longSide, x: freeRect.x, y: freeRect.y };
-  return { a: freeRect.y, b: freeRect.x, c: areaFit, x: freeRect.x, y: freeRect.y }; // BL
+  if (heuristicKey === 'BSSF') return { a: shortSide, b: longSide, c: areaFit, x: fr.x, y: fr.y };
+  if (heuristicKey === 'BAF')  return { a: areaFit, b: shortSide, c: longSide, x: fr.x, y: fr.y };
+  return { a: fr.y, b: fr.x, c: areaFit, x: fr.x, y: fr.y }; // BL
 }
-
 function isBetterPlacement(a, b) {
   if (a.score.a !== b.score.a) return a.score.a < b.score.a;
   if (a.score.b !== b.score.b) return a.score.b < b.score.b;
@@ -626,25 +548,18 @@ function splitFreeRects(free, placed) {
 
     const newRects = [];
 
-    if (placed.y > fr.y) {
-      newRects.push({ x: fr.x, y: fr.y, w: fr.w, h: placed.y - fr.y });
-    }
-    if (placed.y + placed.h < fr.y + fr.h) {
-      newRects.push({ x: fr.x, y: placed.y + placed.h, w: fr.w, h: (fr.y + fr.h) - (placed.y + placed.h) });
-    }
-    if (placed.x > fr.x) {
-      newRects.push({ x: fr.x, y: fr.y, w: placed.x - fr.x, h: fr.h });
-    }
-    if (placed.x + placed.w < fr.x + fr.w) {
-      newRects.push({ x: placed.x + placed.w, y: fr.y, w: (fr.x + fr.w) - (placed.x + placed.w), h: fr.h });
-    }
+    if (placed.y > fr.y) newRects.push({ x: fr.x, y: fr.y, w: fr.w, h: placed.y - fr.y });
+    if (placed.y + placed.h < fr.y + fr.h) newRects.push({
+      x: fr.x, y: placed.y + placed.h, w: fr.w, h: (fr.y + fr.h) - (placed.y + placed.h)
+    });
+    if (placed.x > fr.x) newRects.push({ x: fr.x, y: fr.y, w: placed.x - fr.x, h: fr.h });
+    if (placed.x + placed.w < fr.x + fr.w) newRects.push({
+      x: placed.x + placed.w, y: fr.y, w: (fr.x + fr.w) - (placed.x + placed.w), h: fr.h
+    });
 
     free.splice(i, 1);
     i--;
-
-    for (const nr of newRects) {
-      if (nr.w > 1e-6 && nr.h > 1e-6) free.push(nr);
-    }
+    for (const r of newRects) if (r.w > 1e-6 && r.h > 1e-6) free.push(r);
   }
 }
 
@@ -657,23 +572,17 @@ function pruneFreeRects(free) {
     }
   }
 }
-
 function rectsIntersect(a, b) {
   return !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
 }
-
 function rectContainedIn(a, b) {
   return a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 }
 
 function updateNestUI() {
-  if (!nestSheets || !nestSheets.length) {
-    if (nestNav) nestNav.style.display = 'none';
-    return;
-  }
+  if (!nestSheets || !nestSheets.length) { nestNav.style.display = 'none'; return; }
   const total = nestSheets.length;
   const idx = currentSheet + 1;
-
   sheetInfoEl.textContent = `Ark: ${idx}/${total}`;
 
   const matArea = material.w * material.h;
@@ -685,7 +594,7 @@ function updateNestUI() {
   nestStatsEl.textContent = `Utnyttjande (ark): ${pct.toFixed(1)}% | Delar: ${nestSheets[currentSheet].placements.length}${extra}`;
 }
 
-// ----- Draw -----
+// --------- Draw ---------
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -695,24 +604,21 @@ function draw() {
   const scale = Math.min(canvas.width / safeW, canvas.height / safeH) * 0.92;
   const ox = 20;
   const oy = 20;
-
   view = { scale, ox, oy, matWpx: safeW * scale, matHpx: safeH * scale };
 
-  // Material outline
+  // material
   ctx.strokeStyle = '#0f0';
   ctx.lineWidth = 2;
   ctx.strokeRect(ox, oy, view.matWpx, view.matHpx);
 
-  // Snap zone (tydlig gul)
-  if (measureOn && shiftDown && snapEnabledEl?.checked) {
-    const tolMm = Math.max(0, Number(snapTolEl?.value ?? 0));
+  // snap zone lines when measuring + shift
+  if (measureOn && shiftDown && snapEnabledEl.checked) {
+    const tolMm = Math.max(0, Number(snapTolEl.value ?? 0));
     if (tolMm > 0) {
       const tolPx = Math.max(2, tolMm * view.scale);
 
       ctx.save();
-      ctx.beginPath();
-      ctx.rect(ox, oy, view.matWpx, view.matHpx);
-      ctx.clip();
+      ctx.beginPath(); ctx.rect(ox, oy, view.matWpx, view.matHpx); ctx.clip();
 
       ctx.strokeStyle = 'rgba(255, 220, 0, 0.9)';
       ctx.lineWidth = 2;
@@ -724,18 +630,11 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(ox, oy + view.matHpx - tolPx); ctx.lineTo(ox + view.matWpx, oy + view.matHpx - tolPx); ctx.stroke();
 
       ctx.setLineDash([]);
-
-      ctx.fillStyle = 'rgba(255, 220, 0, 0.05)';
-      ctx.fillRect(ox, oy, tolPx, view.matHpx);
-      ctx.fillRect(ox + view.matWpx - tolPx, oy, tolPx, view.matHpx);
-      ctx.fillRect(ox, oy, view.matWpx, tolPx);
-      ctx.fillRect(ox, oy + view.matHpx - tolPx, view.matWpx, tolPx);
-
       ctx.restore();
     }
   }
 
-  // Snap ring
+  // snap ring
   if (hoverSnap) {
     const p = mmToScreen(hoverSnap.xMm, hoverSnap.yMm);
     ctx.strokeStyle = '#fff';
@@ -745,7 +644,7 @@ function draw() {
     ctx.stroke();
   }
 
-  // Nesting draw
+  // draw nesting rectangles
   if (nestSheets && nestSheets.length) {
     const sheet = nestSheets[currentSheet] || nestSheets[0];
 
@@ -757,17 +656,13 @@ function draw() {
       const p0 = mmToScreen(drawXmm, drawYmm);
       const p1 = mmToScreen(drawXmm + pl.w, drawYmm + pl.h);
 
-      const x = p0.sx;
-      const y = p0.sy;
-      const w = p1.sx - p0.sx;
-      const h = p1.sy - p0.sy;
+      const x = p0.sx, y = p0.sy;
+      const w = p1.sx - p0.sx, h = p1.sy - p0.sy;
 
       const col = colorFromId(pl.partId);
-
       ctx.fillStyle = col.fill;
       ctx.strokeStyle = col.stroke;
       ctx.lineWidth = 2;
-
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
 
@@ -779,15 +674,13 @@ function draw() {
     }
   }
 
-  // Measure draw
+  // measure line
   if (measureP1) {
     const p1 = mmToScreen(measureP1.xMm, measureP1.yMm);
     drawCross(p1.sx, p1.sy);
-
     if (measureP2) {
       const p2 = mmToScreen(measureP2.xMm, measureP2.yMm);
       drawCross(p2.sx, p2.sy);
-
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -802,18 +695,15 @@ function drawCross(x, y) {
   ctx.strokeStyle = '#fff';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(x - 6, y);
-  ctx.lineTo(x + 6, y);
-  ctx.moveTo(x, y - 6);
-  ctx.lineTo(x, y + 6);
+  ctx.moveTo(x - 6, y); ctx.lineTo(x + 6, y);
+  ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6);
   ctx.stroke();
 }
 
-// ----- Thumbnail -----
+// --------- Thumbnail ---------
 function drawThumbnail(part, thumbCanvas) {
   const tctx = thumbCanvas.getContext('2d');
-  const W = thumbCanvas.width;
-  const H = thumbCanvas.height;
+  const W = thumbCanvas.width, H = thumbCanvas.height;
   tctx.clearRect(0, 0, W, H);
 
   const b = part.bounds;
@@ -828,19 +718,18 @@ function drawThumbnail(part, thumbCanvas) {
   const innerH = H - pad * 2;
 
   const s = Math.min(innerW / b.w, innerH / b.h);
-  const drawW = b.w * s;
-  const drawH = b.h * s;
+  const drawW = b.w * s, drawH = b.h * s;
   const offsetX = pad + (innerW - drawW) / 2;
   const offsetY = pad + (innerH - drawH) / 2;
 
   const mapX = (x) => offsetX + (x - b.minX) * s;
   const mapY = (y) => offsetY + (b.maxY - y) * s;
 
-  tctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  tctx.strokeStyle = '#e6e6e6';
   tctx.lineWidth = 1;
   tctx.strokeRect(pad, pad, innerW, innerH);
 
-  tctx.strokeStyle = '#e6e6e6';
+  tctx.strokeStyle = '#111';
   tctx.lineWidth = 1;
 
   const entities = part.dxf?.entities || [];
@@ -848,15 +737,12 @@ function drawThumbnail(part, thumbCanvas) {
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       tctx.beginPath();
       ent.vertices.forEach((v, i) => {
-        const x = mapX(v.x);
-        const y = mapY(v.y);
-        if (i === 0) tctx.moveTo(x, y);
-        else tctx.lineTo(x, y);
+        const x = mapX(v.x), y = mapY(v.y);
+        if (i === 0) tctx.moveTo(x, y); else tctx.lineTo(x, y);
       });
       tctx.stroke();
       continue;
     }
-
     if (ent.type === 'LINE' && ent.start && ent.end) {
       tctx.beginPath();
       tctx.moveTo(mapX(ent.start.x), mapY(ent.start.y));
@@ -864,37 +750,16 @@ function drawThumbnail(part, thumbCanvas) {
       tctx.stroke();
       continue;
     }
-
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
-      const cx = mapX(ent.center.x);
-      const cy = mapY(ent.center.y);
-      const r = ent.radius * s;
       tctx.beginPath();
-      tctx.arc(cx, cy, r, 0, Math.PI * 2);
+      tctx.arc(mapX(ent.center.x), mapY(ent.center.y), ent.radius * s, 0, Math.PI * 2);
       tctx.stroke();
       continue;
-    }
-
-    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
-      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
-      const a0 = degToRad(ent.startAngle ?? 0);
-      const a1 = degToRad(ent.endAngle ?? 0);
-      const pts = arcPoints(cx, cy, r, a0, a1, 32);
-      if (pts.length) {
-        tctx.beginPath();
-        pts.forEach((pt, i) => {
-          const x = mapX(pt.x);
-          const y = mapY(pt.y);
-          if (i === 0) tctx.moveTo(x, y);
-          else tctx.lineTo(x, y);
-        });
-        tctx.stroke();
-      }
     }
   }
 }
 
-// ----- Bounds + helpers -----
+// --------- Bounds helpers ---------
 function boundsToText(b) {
   if (!b || !Number.isFinite(b.w) || !Number.isFinite(b.h) || b.w < 0 || b.h < 0) return 'Okänt';
   return `${Math.round(b.w)} × ${Math.round(b.h)} mm`;
@@ -909,109 +774,37 @@ function getBounds(dxf) {
     if (Array.isArray(ent.vertices) && ent.vertices.length) {
       for (const v of ent.vertices) {
         if (isFinitePoint(v)) {
-          minX = Math.min(minX, v.x);
-          minY = Math.min(minY, v.y);
-          maxX = Math.max(maxX, v.x);
-          maxY = Math.max(maxY, v.y);
+          minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
+          maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
         }
       }
       continue;
     }
-
     if (ent.type === 'LINE' && ent.start && ent.end) {
-      if (isFinitePoint(ent.start)) {
-        minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y);
-        maxX = Math.max(maxX, ent.start.x); maxY = Math.max(maxY, ent.start.y);
-      }
-      if (isFinitePoint(ent.end)) {
-        minX = Math.min(minX, ent.end.x); minY = Math.min(minY, ent.end.y);
-        maxX = Math.max(maxX, ent.end.x); maxY = Math.max(maxY, ent.end.y);
-      }
+      if (isFinitePoint(ent.start)) { minX = Math.min(minX, ent.start.x); minY = Math.min(minY, ent.start.y); maxX = Math.max(maxX, ent.start.x); maxY = Math.max(maxY, ent.start.y); }
+      if (isFinitePoint(ent.end))   { minX = Math.min(minX, ent.end.x);   minY = Math.min(minY, ent.end.y);   maxX = Math.max(maxX, ent.end.x);   maxY = Math.max(maxY, ent.end.y); }
       continue;
     }
-
     if (ent.type === 'CIRCLE' && ent.center && Number.isFinite(ent.radius)) {
       const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
       if (Number.isFinite(cx) && Number.isFinite(cy)) {
-        minX = Math.min(minX, cx - r);
-        minY = Math.min(minY, cy - r);
-        maxX = Math.max(maxX, cx + r);
-        maxY = Math.max(maxY, cy + r);
+        minX = Math.min(minX, cx - r); minY = Math.min(minY, cy - r);
+        maxX = Math.max(maxX, cx + r); maxY = Math.max(maxY, cy + r);
       }
       continue;
     }
-
-    if (ent.type === 'ARC' && ent.center && Number.isFinite(ent.radius)) {
-      const cx = ent.center.x, cy = ent.center.y, r = ent.radius;
-      const a0 = degToRad(ent.startAngle ?? 0);
-      const a1 = degToRad(ent.endAngle ?? 0);
-      if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
-
-      const angles = arcSampleAngles(a0, a1);
-      for (const a of angles) {
-        const x = cx + r * Math.cos(a);
-        const y = cy + r * Math.sin(a);
-        minX = Math.min(minX, x); minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-      }
-    }
   }
 
-  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-    return invalidBounds();
-  }
-  const w = maxX - minX;
-  const h = maxY - minY;
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return invalidBounds();
+  const w = maxX - minX, h = maxY - minY;
   if (!Number.isFinite(w) || !Number.isFinite(h)) return invalidBounds();
-
   return { minX, minY, maxX, maxY, w, h };
 }
 
 function invalidBounds() {
   return { minX: NaN, minY: NaN, maxX: NaN, maxY: NaN, w: NaN, h: NaN };
 }
-
-function isFinitePoint(p) {
-  return p && Number.isFinite(p.x) && Number.isFinite(p.y);
-}
-
-function degToRad(d) { return (d * Math.PI) / 180; }
-
-function arcSampleAngles(a0, a1) {
-  const TWO_PI = Math.PI * 2;
-  const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
-
-  let s = norm(a0);
-  let e = norm(a1);
-  if (e < s) e += TWO_PI;
-
-  const angles = [s, e];
-  const cardinals = [0, Math.PI/2, Math.PI, (3*Math.PI)/2, TWO_PI];
-
-  for (const c of cardinals) {
-    let cc = c;
-    if (cc < s) cc += TWO_PI;
-    if (cc >= s && cc <= e) angles.push(cc);
-  }
-  return angles;
-}
-
-function arcPoints(cx, cy, r, a0, a1, steps = 24) {
-  const TWO_PI = Math.PI * 2;
-  const norm = (a) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
-
-  let s = norm(a0);
-  let e = norm(a1);
-  if (e < s) e += TWO_PI;
-
-  const pts = [];
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const a = s + (e - s) * t;
-    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
-  }
-  return pts;
-}
+function isFinitePoint(p) { return p && Number.isFinite(p.x) && Number.isFinite(p.y); }
 
 function escapeHtml(str) {
   return String(str)
@@ -1032,8 +825,9 @@ function colorFromId(id) {
   };
 }
 
-// init
+// --------- Init ---------
 updateMaterialInfo();
-updateMeasureUI();
 renderFileList();
-draw();
+measureStatus.textContent = 'Mätläge av';
+overlay.textContent = 'Ladda DXF-filer för att börja';
+resizeCanvas();
