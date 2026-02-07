@@ -1,18 +1,9 @@
 /* styles.css — layout + UI för DXF Nest Viewer */
-
 :root{
-  --bg:#0b0f14;
-  --panel:#121924;
-  --panel2:#0f1620;
-  --text:#e8eef6;
-  --muted:#9fb0c4;
-  --line:rgba(255,255,255,0.10);
-  --line2:rgba(255,255,255,0.16);
-  --accent:#2dd4bf;
-  --btn:#1f2a3a;
-  --btn2:#172131;
-  --danger:#ff6b6b;
-  --shadow: 0 10px 30px rgba(0,0,0,0.35);
+  --bg:#0b0f14; --panel:#121924; --panel2:#0f1620;
+  --text:#e8eef6; --muted:#9fb0c4;
+  --line:rgba(255,255,255,0.10); --line2:rgba(255,255,255,0.16);
+  --btn:#1f2a3a; --btn2:#172131; --shadow:0 10px 30px rgba(0,0,0,0.35);
   --radius:14px;
 }
 
@@ -21,7 +12,7 @@ html,body{ height:100%; }
 
 body{
   margin:0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
   background:
     radial-gradient(1200px 700px at 20% 0%, rgba(45,212,191,0.08), transparent 60%),
     radial-gradient(900px 600px at 90% 15%, rgba(99,102,241,0.08), transparent 60%),
@@ -29,255 +20,94 @@ body{
   color:var(--text);
 }
 
-.app{
-  height:100vh;
-  display:flex;
-  gap:14px;
-  padding:14px;
-}
+.app{ height:100vh; display:flex; gap:14px; padding:14px; }
 
-/* Sidebar */
-.sidebar{
-  width:360px;
-  min-width:320px;
-  max-width:420px;
-  overflow:auto;
-  padding-right:4px;
-}
+.sidebar{ width:360px; min-width:320px; max-width:420px; overflow:auto; padding-right:4px; }
 
 .panel{
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%),
-    var(--panel);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%), var(--panel);
   border:1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius:var(--radius);
   padding:12px;
-  margin-bottom:12px;
-  box-shadow: var(--shadow);
+  box-shadow:var(--shadow);
 }
 
-.panel-title{
-  font-size:14px;
-  font-weight:700;
-  letter-spacing:0.2px;
-  margin:0 0 10px 0;
-}
+.panel-title{ font-size:14px; font-weight:800; margin:0 0 10px 0; }
+.hint{ font-size:12px; color:var(--muted); margin-top:10px; line-height:1.35; }
+.divider{ height:1px; background:var(--line); margin:12px 0; }
 
-.hint{
-  font-size:12px;
-  color:var(--muted);
-  margin-top:10px;
-  line-height:1.35;
-}
+.row{ display:flex; gap:10px; }
 
-.divider{
-  height:1px;
-  background: var(--line);
-  margin:12px 0;
-}
-
-/* Inputs */
 input[type="file"]{
-  width:100%;
-  padding:10px;
-  border:1px dashed var(--line2);
-  border-radius:12px;
-  background: rgba(0,0,0,0.2);
-  color: var(--muted);
+  width:100%; padding:10px; border:1px dashed var(--line2);
+  border-radius:12px; background: rgba(0,0,0,0.2); color:var(--muted);
 }
-
 input[type="number"], select{
-  width:100%;
-  padding:10px;
-  border-radius:12px;
-  border:1px solid var(--line);
-  background: rgba(0,0,0,0.22);
-  color: var(--text);
-  outline:none;
+  width:100%; padding:10px; border-radius:12px; border:1px solid var(--line);
+  background: rgba(0,0,0,0.22); color:var(--text);
 }
-
 select{ cursor:pointer; }
+label{ font-size:12px; color:var(--muted); }
 
-label{
-  font-size:12px;
-  color: var(--muted);
-}
-
-.row{
-  display:flex;
-  gap:10px;
-}
-
-/* Buttons / badges */
 .btn{
-  appearance:none;
   border:1px solid var(--line2);
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.05), transparent 65%),
-    var(--btn);
-  color: var(--text);
-  padding:10px 12px;
-  border-radius:12px;
-  cursor:pointer;
-  font-weight:700;
-  font-size:13px;
-  transition: transform 0.06s ease, border-color 0.15s ease, background 0.15s ease;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent 65%), var(--btn);
+  color:var(--text);
+  padding:10px 12px; border-radius:12px; cursor:pointer; font-weight:800; font-size:13px;
 }
-
-.btn:hover{ border-color: rgba(255,255,255,0.22); }
-.btn:active{ transform: translateY(1px); }
-
 .btn-secondary{
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.04), transparent 70%),
-    var(--btn2);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 70%), var(--btn2);
 }
-
 .badge{
-  font-size:12px;
-  padding:8px 10px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  background: rgba(0,0,0,0.25);
-  color: var(--muted);
+  font-size:12px; padding:8px 10px; border-radius:999px;
+  border:1px solid var(--line); background: rgba(0,0,0,0.25); color:var(--muted);
   white-space:nowrap;
 }
 
-/* File list cards */
-.file-list{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
-
-.file-item{
-  border:1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(0,0,0,0.22);
-  padding:10px;
-}
-
-.file-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:8px;
-}
-
-.file-title{
-  font-size:13px;
-  font-weight:800;
-  color: var(--text);
-  word-break: break-word;
-  line-height:1.2;
-}
-
+.file-list{ display:flex; flex-direction:column; gap:10px; }
+.file-item{ border:1px solid var(--line); border-radius:14px; background: rgba(0,0,0,0.22); padding:10px; }
+.file-header{ display:flex; justify-content:space-between; gap:10px; margin-bottom:8px; }
+.file-title{ font-size:13px; font-weight:900; word-break:break-word; line-height:1.2; color:var(--text); }
 .file-remove{
-  flex:0 0 auto;
-  width:28px;
-  height:28px;
-  border-radius:10px;
-  border:1px solid rgba(255,255,255,0.16);
-  background: rgba(0,0,0,0.25);
-  color: var(--text);
-  cursor:pointer;
-  font-weight:900;
-  line-height:1;
-  transition: border-color 0.15s ease, transform 0.06s ease;
+  width:28px; height:28px; border-radius:10px; border:1px solid rgba(255,255,255,0.16);
+  background: rgba(0,0,0,0.25); color:var(--text); cursor:pointer; font-weight:900;
 }
+.file-fields{ display:flex; flex-direction:column; gap:8px; margin-top:8px; }
 
-.file-remove:hover{ border-color: rgba(255,107,107,0.7); }
-.file-remove:active{ transform: translateY(1px); }
-
-.file-fields{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-  margin-top:8px;
-}
-
-/* Thumbnail canvas */
 .thumb-wide{
   width:100%;
-  height:140px;
+  height:140px; /* viktigt: matchar din interna 240x140 bra */
   display:block;
   border-radius:12px;
   border:1px solid var(--line);
   background: rgba(255,255,255,0.06);
 }
 
-/* Main / Canvas */
-.main{
-  flex:1;
-  display:flex;
-  min-width: 0;
-}
-
+.main{ flex:1; display:flex; min-width:0; }
 .canvas-wrap{
-  flex:1;
-  border-radius: var(--radius);
-  border:1px solid var(--line);
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%),
-    var(--panel2);
-  box-shadow: var(--shadow);
-  padding:10px;
-  display:flex;
-  min-width:0;
-  position:relative;
+  flex:1; border-radius:var(--radius); border:1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%), var(--panel2);
+  box-shadow:var(--shadow);
+  padding:10px; display:flex; min-width:0; position:relative;
 }
 
 #canvas{
   width:100%;
   height:100%;
-  border-radius: 12px;
+  border-radius:12px;
   background: rgba(0,0,0,0.28);
   display:block;
 }
 
-/* Overlay + toolbar */
-.overlay{
-  position:absolute;
-  left:14px;
-  top:14px;
-  z-index:5;
-}
-
 .toolbar{
-  position:absolute;
-  right:14px;
-  top:14px;
-  z-index:6;
-  display:flex;
-  gap:10px;
-  align-items:center;
-  flex-wrap:wrap;
-  max-width: calc(100% - 28px);
-  justify-content:flex-end;
+  position:absolute; right:14px; top:14px; z-index:6;
+  display:flex; gap:10px; align-items:center;
 }
 
-.readout-badge{
-  max-width: 520px;
-  overflow:hidden;
-  text-overflow: ellipsis;
+.overlay{
+  position:absolute; left:14px; top:14px; z-index:5;
 }
 
-/* Scrollbar */
-.sidebar::-webkit-scrollbar{ width:10px; }
-.sidebar::-webkit-scrollbar-track{ background: transparent; }
-.sidebar::-webkit-scrollbar-thumb{
-  background: rgba(255,255,255,0.12);
-  border-radius: 999px;
-  border:2px solid transparent;
-  background-clip: padding-box;
-}
-.sidebar::-webkit-scrollbar-thumb:hover{
-  background: rgba(255,255,255,0.18);
-  background-clip: padding-box;
-}
-
-/* Mobile-ish fallback */
 @media (max-width: 980px){
   .app{ flex-direction:column; }
   .sidebar{ width:auto; max-width:none; }
