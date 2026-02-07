@@ -4,7 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DXF Nester</title>
-  <link rel="stylesheet" href="styles.css?v=1">
+
+  <link rel="stylesheet" href="./styles.css?v=1">
+
+  <!-- UMD build: ger window.DxfParser -->
+  <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.7/dist/dxf-parser.min.js"></script>
 </head>
 <body>
   <div class="app">
@@ -12,6 +16,7 @@
       <div class="panel">
         <h2 class="panel-title">DXF-filer</h2>
         <input id="fileInput" type="file" accept=".dxf" multiple />
+
         <div class="divider"></div>
 
         <h3 class="panel-title">Material (mm)</h3>
@@ -39,6 +44,7 @@
         </div>
 
         <div id="materialInfo" class="hint"></div>
+
         <div class="divider"></div>
 
         <h3 class="panel-title">Nestning</h3>
@@ -69,6 +75,7 @@
         </div>
 
         <div class="divider"></div>
+
         <div id="fileList" class="file-list"></div>
       </div>
     </aside>
@@ -91,7 +98,7 @@
             mm
           </label>
 
-          <div id="measureReadout" class="badge readout-badge"></div>
+          <div id="measureReadout" class="badge"></div>
         </div>
 
         <canvas id="canvas"></canvas>
@@ -99,7 +106,7 @@
     </main>
   </div>
 
-  <!-- Viktigt: module -->
-  <script type="module" src="main.js?v=1"></script>
+  <!-- defer så DOM finns när JS kör -->
+  <script defer src="./main.js?v=1"></script>
 </body>
 </html>
