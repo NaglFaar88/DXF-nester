@@ -5,18 +5,45 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DXF Nester</title>
 
-  <link rel="stylesheet" href="./styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=1">
 
-  <!-- UMD build: ger window.DxfParser -->
-  <script defer src="https://unpkg.com/dxf-parser@1.1.7/dist/dxf-parser.min.js"></script>
+  <!-- Ladda dxf-parser (UMD) med fallback -->
+  <script>
+    (function loadDxfParser(){
+      const urls = [
+        // jsDelivr (vanligtvis bäst på GitHub Pages)
+        "https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js",
+        // unpkg fallback (OBS: dxf-parser.js, inte .min.js)
+        "https://unpkg.com/dxf-parser@1.1.2/dist/dxf-parser.js"
+      ];
+
+      let i = 0;
+      function tryNext(){
+        if (i >= urls.length) {
+          console.error("Kunde inte ladda dxf-parser från CDN.");
+          return;
+        }
+        const s = document.createElement("script");
+        s.src = urls[i++];
+        s.async = true;
+        s.onload = () => console.log("dxf-parser laddad:", s.src);
+        s.onerror = () => {
+          console.warn("Misslyckades ladda:", s.src);
+          tryNext();
+        };
+        document.head.appendChild(s);
+      }
+      tryNext();
+    })();
+  </script>
 </head>
+
 <body>
   <div class="app">
     <aside class="sidebar">
       <div class="panel">
         <h2 class="panel-title">DXF-filer</h2>
         <input id="fileInput" type="file" accept=".dxf" multiple />
-
         <div class="divider"></div>
 
         <h3 class="panel-title">Material (mm)</h3>
@@ -75,16 +102,15 @@
         </div>
 
         <div class="divider"></div>
-
         <div id="fileList" class="file-list"></div>
       </div>
     </aside>
 
     <main class="main">
       <div class="canvas-wrap" style="position:relative;">
-        <div id="overlay" class="badge overlay"></div>
+        <div id="overlay" class="badge" style="position:absolute; left:14px; top:14px; z-index:5;"></div>
 
-        <div class="toolbar">
+        <div style="position:absolute; right:14px; top:14px; z-index:6; display:flex; gap:10px; align-items:center;">
           <button id="measureBtn" class="btn">Mät</button>
           <div id="measureStatus" class="badge">Mätläge av</div>
 
@@ -106,7 +132,6 @@
     </main>
   </div>
 
-  <!-- defer så DOM finns när JS kör -->
-  <script defer src="./main.js"></script>
+  <script src="main.js?v=1"></script>
 </body>
 </html>
